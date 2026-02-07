@@ -4,11 +4,16 @@
 
 ## 1) 디렉터리 구조
 
+- `src/`
+  - 모든 앱 소스 (`apps/*`)
+  - 공통 헤더 (`common/rocket_mav_common.h`)
+- `build/`
+  - 빌드 산출물(바이너리)
 - `mav_batt/`
   - 배터리 상태 수신 데몬(`mav_battd.c`) 및 단발성 유틸(`mav_batt.c`)
 - `scan/`
-  - 토픽 스캔 + 파라미터 덤프 주 도구 (`scan_main.c`)
-  - 참고용 예전 소스: `scan.c`, `scan2.c`
+  - 토픽 스캔 + 파라미터 덤프 주 도구 (`src/apps/scan/main.c`)
+  - 참고용 예전 소스: `src/apps/scan/legacy/*`
 - `servo_test/`
   - `MAV_CMD_DO_SET_ACTUATOR` 기반 서보 테스트
 - `motor_init/`
@@ -27,13 +32,19 @@
 - 소스 프로젝트: `~/mavlink_projects/<project_name>`
 - 빌드 결과물: `~/Tools/<program_name>`
 
-현재 표준 빌드 예시:
+현재 표준 빌드 예시(권장):
 
 ```bash
-gcc ~/mavlink_projects/scan/scan_main.c -I ~/mavlink_projects/mavlink_lib/common -I ~/mavlink_projects/rocket_mav_common -lm -o ~/Tools/scan
-gcc ~/mavlink_projects/servo_test/servo_test.c -I ~/mavlink_projects/mavlink_lib/common -I ~/mavlink_projects/rocket_mav_common -lm -o ~/Tools/servo_test
-gcc ~/mavlink_projects/motor_init/motor_init.c -I ~/mavlink_projects/mavlink_lib/common -I ~/mavlink_projects/rocket_mav_common -lm -o ~/Tools/motor_init
-gcc ~/mavlink_projects/mav_batt/mav_battd.c -I ~/mavlink_projects/mavlink_lib/common -o ~/Tools/mav_battd
+cd ~/mavlink_projects
+make
+make install
+```
+
+개별 바이너리만 만들고 싶다면:
+
+```bash
+cd ~/mavlink_projects
+make build
 ```
 
 ## 3) 통신 구조 (router 중심)
@@ -71,6 +82,7 @@ App -> Router (Server/ingress):
 ## 5) 공통 설정 시스템
 
 공통 키 로더 파일: `rocket_mav_common/rocket_mav_common.h`
+소스 위치: `src/common/rocket_mav_common.h`
 
 설정 우선순위:
 1. 실행 환경변수 (`export KEY=VALUE`)
@@ -99,7 +111,7 @@ App -> Router (Server/ingress):
 
 ## 6) 프로그램별 역할 요약
 
-### `scan` (`scan/scan_main.c`)
+### `scan` (`src/apps/scan/main.c`)
 - HEARTBEAT/토픽 스캔
 - `PARAM_REQUEST_LIST` + 누락 index 재요청(`PARAM_REQUEST_READ`)
 - 결과 저장: `/tmp/config.params` + 영구 경로
@@ -113,7 +125,7 @@ App -> Router (Server/ingress):
 - `servo_test`와 동일한 전송 메커니즘
 - 모터/엔진 초기화 절차 인터페이스용으로 분리 운영
 
-### `mav_battd` (`mav_batt/mav_battd.c`)
+### `mav_battd` (`src/apps/mav_battd/mav_battd.c`)
 - 배터리 관련 MAVLink 메시지 수신
 - tmux에서 읽기 쉬운 문자열을 `/tmp/mav_batt_last`에 지속 갱신
 
@@ -160,3 +172,24 @@ cd ~/mavlink_projects
 ./scripts/install_rocket_mav.sh
 ./scripts/package_release.sh
 ```
+
+## 11) 새 프로젝트 추가 방법
+
+기본 규칙:
+- 소스: `src/apps/<app_name>/`
+- 공통 헤더: `src/common/rocket_mav_common.h`
+- 빌드 산출물: `build/bin/<app_name>`
+- 설치 위치: `~/Tools/<app_name>`
+
+새 앱 예시:
+
+```bash
+mkdir -p src/apps/my_tool
+cat > src/apps/my_tool/my_tool.c <<'EOF'
+#include <stdio.h>
+int main(void) { puts("hello"); return 0; }
+EOF
+```
+
+Makefile은 `src/apps/*`를 **자동 탐색**합니다.
+새 앱을 추가하면 `make`만으로 자동 빌드됩니다.

@@ -4,8 +4,8 @@ MAVLink UDP(127.0.0.1:14550)에서 배터리 상태를 읽어 tmux 상태바에 
 간단한 데몬과 상태 문자열 제공 도구입니다.
 
 ## 구성
-- `mav_battd.c`: MAVLink 배터리 상태를 계속 수신해 `/tmp/mav_batt_last`에 저장하는 데몬
-- `mav_batt.c`: (옵션) 한 번만 읽어 상태 문자열을 출력하는 유틸리티
+- `src/apps/mav_battd/mav_battd.c`: MAVLink 배터리 상태를 계속 수신해 `/tmp/mav_batt_last`에 저장하는 데몬
+- `src/apps/mav_batt/mav_batt.c`: (옵션) 한 번만 읽어 상태 문자열을 출력하는 유틸리티
 
 ## 빌드
 ```bash
