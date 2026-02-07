@@ -1,0 +1,17 @@
+# external/upstream repos
+mavlink/
+mavlink-router/
+mavlink_lib/
+mavlink_test/
+
+# build artifacts
+**/build/
+**/*.o
+**/*.a
+**/*.so
+**/*.out
+
+# generated runtime files
+scan/config.params
+dist/
+**/.DS_Store

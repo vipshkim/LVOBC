@@ -1,0 +1,54 @@
+[General]
+ReportStats=false
+
+[UartEndpoint pixhawk]
+Device=/dev/ttyAMA0
+Baud=921600
+FlowControl=true
+
+# Router -> App fan-out
+[UdpEndpoint mav_batt]
+Mode=Normal
+Address=127.0.0.1
+Port=14550
+
+[UdpEndpoint mav_controller]
+Mode=Normal
+Address=127.0.0.1
+Port=14551
+
+[UdpEndpoint mav_console]
+Mode=Normal
+Address=127.0.0.1
+Port=14552
+
+[UdpEndpoint scan]
+Mode=Normal
+Address=127.0.0.1
+Port=14553
+
+# App -> Router ingress
+[UdpEndpoint mav_batt_ingress]
+Mode=Server
+Address=127.0.0.1
+Port=14650
+
+[UdpEndpoint mav_controller_ingress]
+Mode=Server
+Address=127.0.0.1
+Port=14651
+
+[UdpEndpoint mav_console_ingress]
+Mode=Server
+Address=127.0.0.1
+Port=14652
+
+[UdpEndpoint scan_ingress]
+Mode=Server
+Address=127.0.0.1
+Port=14653
+
+[UdpEndpoint tools_ingress]
+Mode=Server
+Address=127.0.0.1
+Port=14660
