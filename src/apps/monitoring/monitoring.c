@@ -31,21 +31,22 @@ static double monotonic_seconds(void) {
 
 static void format_monitoring(int have_percent, int percent, int have_voltage, double voltage,
                               int have_gps_sats, int gps_sats, char *out, size_t out_len) {
-    char batt[32] = "BATT=NA";
+    char batt[32] = "🔋NA";
+    char gps[32] = "📡NA";
     if (have_percent) {
         if (percent < 0) percent = 0;
         if (percent > 100) percent = 100;
-        snprintf(batt, sizeof(batt), "BATT=%d%%", percent);
+        snprintf(batt, sizeof(batt), "🔋%d%%", percent);
     } else if (have_voltage) {
-        snprintf(batt, sizeof(batt), "BATT=%.1fV", voltage);
+        snprintf(batt, sizeof(batt), "🔋%.1fV", voltage);
     }
 
     if (have_gps_sats) {
         if (gps_sats < 0) gps_sats = 0;
-        snprintf(out, out_len, "%s GPS_SATS=%d", batt, gps_sats);
-    } else {
-        snprintf(out, out_len, "%s GPS_SATS=NA", batt);
+        snprintf(gps, sizeof(gps), "📡%d", gps_sats);
     }
+
+    snprintf(out, out_len, "%s %s", batt, gps);
 }
 
 static void print_monitoring(int have_percent, int percent, int have_voltage, double voltage,
