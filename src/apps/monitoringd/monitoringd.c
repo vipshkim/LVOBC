@@ -51,20 +51,20 @@ static void write_value(const char *value) {
 
 static void format_monitoring(int have_percent, int percent, int have_voltage, double voltage,
                               int have_gps_sats, int gps_sats, char *out, size_t out_len) {
-    char batt[32] = "BATT:--";
+    char batt[32] = "BATT=NA";
     if (have_percent) {
         if (percent < 0) percent = 0;
         if (percent > 100) percent = 100;
-        snprintf(batt, sizeof(batt), "BATT:%d%%", percent);
+        snprintf(batt, sizeof(batt), "BATT=%d%%", percent);
     } else if (have_voltage) {
-        snprintf(batt, sizeof(batt), "BATT:%.1fV", voltage);
+        snprintf(batt, sizeof(batt), "BATT=%.1fV", voltage);
     }
 
     if (have_gps_sats) {
         if (gps_sats < 0) gps_sats = 0;
-        snprintf(out, out_len, "%s GPS:%d", batt, gps_sats);
+        snprintf(out, out_len, "%s GPS_SATS=%d", batt, gps_sats);
     } else {
-        snprintf(out, out_len, "%s GPS:--", batt);
+        snprintf(out, out_len, "%s GPS_SATS=NA", batt);
     }
 }
 
@@ -74,7 +74,7 @@ int main(void) {
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        write_value("BATT:-- GPS:--");
+        write_value("BATT=NA GPS_SATS=NA");
         return 1;
     }
 
@@ -87,13 +87,13 @@ int main(void) {
     addr.sin_port = htons(LISTEN_PORT);
     if (inet_pton(AF_INET, LISTEN_IP, &addr.sin_addr) != 1) {
         close(sock);
-        write_value("BATT:-- GPS:--");
+        write_value("BATT=NA GPS_SATS=NA");
         return 1;
     }
 
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(sock);
-        write_value("BATT:-- GPS:--");
+        write_value("BATT=NA GPS_SATS=NA");
         return 1;
     }
 

@@ -127,7 +127,7 @@ App -> Router (Server/ingress):
 
 ### `monitoringd` (`src/apps/monitoringd/monitoringd.c`)
 - 배터리 + GPS 위성 수 등 MAVLink 메시지 수신
-- tmux에서 읽기 쉬운 문자열을 `/tmp/monitoring_last`에 지속 갱신
+- `key=value` 형식 문자열을 `/tmp/monitoring_last`에 지속 갱신
 
 ## 7) 운영 기본 순서
 

@@ -31,20 +31,20 @@ static double monotonic_seconds(void) {
 
 static void format_monitoring(int have_percent, int percent, int have_voltage, double voltage,
                               int have_gps_sats, int gps_sats, char *out, size_t out_len) {
-    char batt[32] = "BATT:--";
+    char batt[32] = "BATT=NA";
     if (have_percent) {
         if (percent < 0) percent = 0;
         if (percent > 100) percent = 100;
-        snprintf(batt, sizeof(batt), "BATT:%d%%", percent);
+        snprintf(batt, sizeof(batt), "BATT=%d%%", percent);
     } else if (have_voltage) {
-        snprintf(batt, sizeof(batt), "BATT:%.1fV", voltage);
+        snprintf(batt, sizeof(batt), "BATT=%.1fV", voltage);
     }
 
     if (have_gps_sats) {
         if (gps_sats < 0) gps_sats = 0;
-        snprintf(out, out_len, "%s GPS:%d", batt, gps_sats);
+        snprintf(out, out_len, "%s GPS_SATS=%d", batt, gps_sats);
     } else {
-        snprintf(out, out_len, "%s GPS:--", batt);
+        snprintf(out, out_len, "%s GPS_SATS=NA", batt);
     }
 }
 
@@ -53,20 +53,6 @@ static void print_monitoring(int have_percent, int percent, int have_voltage, do
     char out[64];
     format_monitoring(have_percent, percent, have_voltage, voltage, have_gps_sats, gps_sats, out, sizeof(out));
     printf("%s", out);
-}
-
-static void print_battery(int have_percent, int percent, int have_voltage, double voltage) {
-    if (have_percent) {
-        if (percent < 0) percent = 0;
-        if (percent > 100) percent = 100;
-        printf("BATT:%d%%", percent);
-        return;
-    }
-    if (have_voltage) {
-        printf("BATT:%.1fV", voltage);
-        return;
-    }
-    printf("BATT:--");
 }
 
 int main(void) {

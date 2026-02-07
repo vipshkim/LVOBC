@@ -40,9 +40,9 @@ systemctl --user enable --now monitoringd.service
 그리고 상태바에 `#{monitoring}`를 추가합니다.
 
 ## 출력 예시
-- `BATT:85% GPS:14`
-- `BATT:11.8V GPS:10`
-- 데이터 없음: `BATT:-- GPS:--`
+- `BATT=85% GPS_SATS=14`
+- `BATT=11.8V GPS_SATS=10`
+- 데이터 없음: `BATT=NA GPS_SATS=NA`
 
 ## 참고
 - `/tmp`는 대부분 tmpfs(RAM)로 동작합니다.
