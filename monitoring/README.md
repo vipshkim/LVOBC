@@ -47,3 +47,5 @@ systemctl --user enable --now monitoringd.service
 ## 참고
 - `/tmp`는 대부분 tmpfs(RAM)로 동작합니다.
 - 배터리 퍼센트는 `SYS_STATUS.battery_remaining` 또는 `BATTERY_STATUS.battery_remaining`를 사용합니다.
+- `monitoringd`는 `SYSTEM_TIME`을 구독하며 로컬 시간과 60초 이상 차이나면 시스템 시간 동기화를 시도합니다.
+- 시간 동기화에는 권한이 필요합니다(`root` 또는 `CAP_SYS_TIME`).

@@ -24,6 +24,9 @@
 #define LISTEN_PORT 14550
 #define SELECT_TIMEOUT 0.2
 #define OUTPUT_FILE "/tmp/monitoring_last"
+#define TIME_SYNC_THRESHOLD_SEC 60
+#define TIME_SYNC_RETRY_INTERVAL_SEC 10.0
+#define MIN_VALID_UNIX_USEC 1577836800000000ULL /* 2020-01-01T00:00:00Z */
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -47,6 +50,29 @@ static void write_value(const char *value) {
     fprintf(fp, "%s", value);
     fclose(fp);
     rename(tmp_path, OUTPUT_FILE);
+}
+
+/*
+ * Try to align system time from MAVLink SYSTEM_TIME.time_unix_usec.
+ * Return 1 on successful set, 0 when no update needed/invalid input, <0 on error (-errno).
+ */
+static int maybe_sync_realtime_from_mavlink(uint64_t time_unix_usec, long *out_diff_sec) {
+    if (time_unix_usec < MIN_VALID_UNIX_USEC) return 0;
+
+    time_t local_sec = time(NULL);
+    if (local_sec <= 0) return 0;
+
+    time_t remote_sec = (time_t)(time_unix_usec / 1000000ULL);
+    long diff_sec = (long)llabs((long long)remote_sec - (long long)local_sec);
+    if (out_diff_sec) *out_diff_sec = diff_sec;
+    if (diff_sec < TIME_SYNC_THRESHOLD_SEC) return 0;
+
+    struct timespec ts;
+    ts.tv_sec = remote_sec;
+    ts.tv_nsec = (long)((time_unix_usec % 1000000ULL) * 1000ULL);
+    if (clock_settime(CLOCK_REALTIME, &ts) == 0) return 1;
+
+    return -errno;
 }
 
 static void format_monitoring(int have_percent, int percent, int have_voltage, double voltage,
@@ -109,6 +135,8 @@ int main(void) {
     memset(&status, 0, sizeof(status));
 
     double last_write = 0.0;
+    double last_time_sync_try = 0.0;
+    double last_time_sync_warn = 0.0;
     char out[64];
     format_monitoring(have_percent, percent, have_voltage, voltage, have_gps_sats, gps_sats, out, sizeof(out));
     write_value(out);
@@ -162,6 +190,26 @@ int main(void) {
                         if (gps.satellites_visible != UINT8_MAX) {
                             have_gps_sats = 1;
                             gps_sats = (int)gps.satellites_visible;
+                        }
+                    } else if (message.msgid == MAVLINK_MSG_ID_SYSTEM_TIME) {
+                        double now_mono = monotonic_seconds();
+                        if ((now_mono - last_time_sync_try) >= TIME_SYNC_RETRY_INTERVAL_SEC) {
+                            mavlink_system_time_t st;
+                            long diff_sec = 0;
+                            mavlink_msg_system_time_decode(&message, &st);
+                            int sync_res = maybe_sync_realtime_from_mavlink(st.time_unix_usec, &diff_sec);
+                            last_time_sync_try = now_mono;
+
+                            if (sync_res == 1) {
+                                fprintf(stderr, "[monitoringd] system time updated from MAVLink (diff=%lds)\n", diff_sec);
+                            } else if (sync_res < 0 && (now_mono - last_time_sync_warn) >= 60.0) {
+                                if (sync_res == -EPERM) {
+                                    fprintf(stderr, "[monitoringd] no permission to set system time (need CAP_SYS_TIME/root)\n");
+                                } else {
+                                    fprintf(stderr, "[monitoringd] failed to set system time: %s\n", strerror(-sync_res));
+                                }
+                                last_time_sync_warn = now_mono;
+                            }
                         }
                     }
                 }
