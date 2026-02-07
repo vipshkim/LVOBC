@@ -10,16 +10,17 @@
 - `build/`
   - 빌드 산출물(바이너리)
 - `monitoring/`
-  - 모니터링 데몬(`monitoringd.c`) 및 단발성 유틸(`monitoring.c`)
+  - 모니터링 문서
 - `scan/`
-  - 토픽 스캔 + 파라미터 덤프 주 도구 (`src/apps/scan/main.c`)
-  - 참고용 예전 소스: `src/apps/scan/legacy/*`
+  - 파라미터 스냅샷 보관 경로 (`scan/config.params`)
 - `servo_test/`
-  - `MAV_CMD_DO_SET_ACTUATOR` 기반 서보 테스트
+  - 서보 테스트 문서
 - `motor_init/`
-  - `MAV_CMD_DO_SET_ACTUATOR` 기반 모터/엔진 초기화 테스트
+  - 모터/엔진 초기화 문서
 - `rocket_mav_common/`
-  - 공통 설정 로더/경로 선택 헤더 (`rocket_mav_common.h`)
+  - 공통 설정 문서
+- `archive/duplicate_outside_src/`
+  - `src` 밖에 있던 과거 중복 소스/바이너리 백업
 - `config/`
   - 시스템 설정 템플릿(`ports.env.sample`, `mavlink-router.main.conf.sample`)
 - `mavlink_lib/`
@@ -116,12 +117,12 @@ App -> Router (Server/ingress):
 - `PARAM_REQUEST_LIST` + 누락 index 재요청(`PARAM_REQUEST_READ`)
 - 결과 저장: `/tmp/config.params` + 영구 경로
 
-### `servo_test` (`servo_test/servo_test.c`)
+### `servo_test` (`src/apps/servo_test/servo_test.c`)
 - 강제 ARM -> 서보별 sine 테스트 -> 출력 0 리셋 -> 강제 DISARM
 - Enter로 다음 채널, `q`로 종료
 - 역할명은 config 파라미터(`PWM_MAIN_FUNCx`, `PWM_AUX_FUNCx`)로 표시
 
-### `motor_init` (`motor_init/motor_init.c`)
+### `motor_init` (`src/apps/motor_init/motor_init.c`)
 - `servo_test`와 동일한 전송 메커니즘
 - 모터/엔진 초기화 절차 인터페이스용으로 분리 운영
 

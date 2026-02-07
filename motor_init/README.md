@@ -17,9 +17,9 @@ MAVLink 통신 기본값은 공통 설정에서 읽습니다.
 
 ## 빌드
 ```bash
-cd ~/mavlink_projects/motor_init
-
-gcc motor_init.c -I ../mavlink_lib/common/ -I ../rocket_mav_common -lm -o ~/Tools/motor_init
+cd ~/mavlink_projects
+make build
+make install
 ```
 
 ## 실행

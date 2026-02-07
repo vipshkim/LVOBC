@@ -1,6 +1,7 @@
 # rocket_mav_common
 
 공통 MAVLink 설정/경로 유틸 헤더입니다.
+실제 헤더 소스는 `src/common/rocket_mav_common.h`에서 관리합니다.
 
 ## 설정 파일 우선순위
 1. 실행 환경변수(`export KEY=...`)
