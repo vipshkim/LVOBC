@@ -16,7 +16,7 @@ chmod +x scripts/install_rocket_mav.sh
 ./scripts/install_rocket_mav.sh \
   --install-system-config \
   --install-router-sample \
-  --enable-battd-service
+  --enable-monitoring-service
 ```
 
 ## package_release.sh

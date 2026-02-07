@@ -23,7 +23,7 @@
 #define LISTEN_IP   "127.0.0.1"
 #define LISTEN_PORT 14550
 #define SELECT_TIMEOUT 0.2
-#define OUTPUT_FILE "/tmp/mav_batt_last"
+#define OUTPUT_FILE "/tmp/monitoring_last"
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -49,18 +49,23 @@ static void write_value(const char *value) {
     rename(tmp_path, OUTPUT_FILE);
 }
 
-static void format_battery(int have_percent, int percent, int have_voltage, double voltage, char *out, size_t out_len) {
+static void format_monitoring(int have_percent, int percent, int have_voltage, double voltage,
+                              int have_gps_sats, int gps_sats, char *out, size_t out_len) {
+    char batt[32] = "BATT:--";
     if (have_percent) {
         if (percent < 0) percent = 0;
         if (percent > 100) percent = 100;
-        snprintf(out, out_len, "BATT:%d%%", percent);
-        return;
+        snprintf(batt, sizeof(batt), "BATT:%d%%", percent);
+    } else if (have_voltage) {
+        snprintf(batt, sizeof(batt), "BATT:%.1fV", voltage);
     }
-    if (have_voltage) {
-        snprintf(out, out_len, "BATT:%.1fV", voltage);
-        return;
+
+    if (have_gps_sats) {
+        if (gps_sats < 0) gps_sats = 0;
+        snprintf(out, out_len, "%s GPS:%d", batt, gps_sats);
+    } else {
+        snprintf(out, out_len, "%s GPS:--", batt);
     }
-    snprintf(out, out_len, "BATT:--");
 }
 
 int main(void) {
@@ -69,7 +74,7 @@ int main(void) {
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
-        write_value("BATT:--");
+        write_value("BATT:-- GPS:--");
         return 1;
     }
 
@@ -82,13 +87,13 @@ int main(void) {
     addr.sin_port = htons(LISTEN_PORT);
     if (inet_pton(AF_INET, LISTEN_IP, &addr.sin_addr) != 1) {
         close(sock);
-        write_value("BATT:--");
+        write_value("BATT:-- GPS:--");
         return 1;
     }
 
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(sock);
-        write_value("BATT:--");
+        write_value("BATT:-- GPS:--");
         return 1;
     }
 
@@ -96,6 +101,8 @@ int main(void) {
     int percent = -1;
     int have_voltage = 0;
     double voltage = 0.0;
+    int have_gps_sats = 0;
+    int gps_sats = -1;
 
     mavlink_message_t message;
     mavlink_status_t status;
@@ -103,7 +110,7 @@ int main(void) {
 
     double last_write = 0.0;
     char out[64];
-    format_battery(have_percent, percent, have_voltage, voltage, out, sizeof(out));
+    format_monitoring(have_percent, percent, have_voltage, voltage, have_gps_sats, gps_sats, out, sizeof(out));
     write_value(out);
 
     while (g_running) {
@@ -149,6 +156,13 @@ int main(void) {
                             have_percent = 1;
                             percent = (int)batt.battery_remaining;
                         }
+                    } else if (message.msgid == MAVLINK_MSG_ID_GPS_RAW_INT) {
+                        mavlink_gps_raw_int_t gps;
+                        mavlink_msg_gps_raw_int_decode(&message, &gps);
+                        if (gps.satellites_visible != UINT8_MAX) {
+                            have_gps_sats = 1;
+                            gps_sats = (int)gps.satellites_visible;
+                        }
                     }
                 }
             }
@@ -156,7 +170,7 @@ int main(void) {
 
         double now = monotonic_seconds();
         if ((now - last_write) >= 0.5) {
-            format_battery(have_percent, percent, have_voltage, voltage, out, sizeof(out));
+            format_monitoring(have_percent, percent, have_voltage, voltage, have_gps_sats, gps_sats, out, sizeof(out));
             write_value(out);
             last_write = now;
         }

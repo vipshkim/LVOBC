@@ -9,8 +9,8 @@
   - 공통 헤더 (`common/rocket_mav_common.h`)
 - `build/`
   - 빌드 산출물(바이너리)
-- `mav_batt/`
-  - 배터리 상태 수신 데몬(`mav_battd.c`) 및 단발성 유틸(`mav_batt.c`)
+- `monitoring/`
+  - 모니터링 데몬(`monitoringd.c`) 및 단발성 유틸(`monitoring.c`)
 - `scan/`
   - 토픽 스캔 + 파라미터 덤프 주 도구 (`src/apps/scan/main.c`)
   - 참고용 예전 소스: `src/apps/scan/legacy/*`
@@ -55,13 +55,13 @@ make build
 - Pixhawk: `/dev/ttyAMA0 @ 921600`
 
 Router -> App (Normal/fan-out):
-- `14550`: `mav_batt`
+- `14550`: `monitoring`
 - `14551`: `mav_controller`
 - `14552`: `mav_console`
 - `14553`: `scan`
 
 App -> Router (Server/ingress):
-- `14650`: `mav_batt_ingress`
+- `14650`: `monitoring_ingress`
 - `14651`: `mav_controller_ingress`
 - `14652`: `mav_console_ingress`
 - `14653`: `scan_ingress`
@@ -71,7 +71,7 @@ App -> Router (Server/ingress):
 
 - 실시간/휘발(우선): `/tmp/config.params`
 - 영구 백업: `~/mavlink_projects/scan/config.params`
-- 배터리 상태 캐시: `/tmp/mav_batt_last`
+- 모니터링 캐시: `/tmp/monitoring_last`
 
 `scan` 실행 시 파라미터를 수신해 위 2개 경로에 저장합니다.
 
@@ -125,15 +125,15 @@ App -> Router (Server/ingress):
 - `servo_test`와 동일한 전송 메커니즘
 - 모터/엔진 초기화 절차 인터페이스용으로 분리 운영
 
-### `mav_battd` (`src/apps/mav_battd/mav_battd.c`)
-- 배터리 관련 MAVLink 메시지 수신
-- tmux에서 읽기 쉬운 문자열을 `/tmp/mav_batt_last`에 지속 갱신
+### `monitoringd` (`src/apps/monitoringd/monitoringd.c`)
+- 배터리 + GPS 위성 수 등 MAVLink 메시지 수신
+- tmux에서 읽기 쉬운 문자열을 `/tmp/monitoring_last`에 지속 갱신
 
 ## 7) 운영 기본 순서
 
 1. `mavlink-router` 구동 확인
 2. `scan` 실행으로 최신 파라미터 동기화
-3. 필요한 도구(`servo_test`, `motor_init`, `mav_battd`) 실행
+3. 필요한 도구(`servo_test`, `motor_init`, `monitoringd`) 실행
 
 예:
 

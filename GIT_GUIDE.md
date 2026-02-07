@@ -6,7 +6,7 @@
 ## 1) 추천 관리 대상
 
 직접 개발 코드만 추적:
-- `mav_batt/`
+- `monitoring/`
 - `scan/`
 - `servo_test/`
 - `motor_init/`
@@ -55,7 +55,7 @@ dist/
 ```bash
 cd ~/mavlink_projects
 git add README.md GIT_GUIDE.md \
-  mav_batt scan servo_test motor_init rocket_mav_common config \
+  monitoring scan servo_test motor_init rocket_mav_common config \
   .gitignore
 git commit -m "chore: organize rocket mavlink workspace and docs"
 ```

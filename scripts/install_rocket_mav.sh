@@ -8,7 +8,7 @@ USER_SYSTEMD_DIR="${USER_SYSTEMD_DIR:-$HOME/.config/systemd/user}"
 
 INSTALL_SYSTEM_CONFIG=0
 INSTALL_ROUTER_SAMPLE=0
-ENABLE_BATTD_SERVICE=0
+ENABLE_MONITORING_SERVICE=0
 FORCE_OVERWRITE=0
 
 usage() {
@@ -22,7 +22,7 @@ Options:
   --user-config-dir <path>    Install user config to this directory (default: ~/.config/rocket-mav)
   --install-system-config     Install ports.env to /etc/rocket-mav/ports.env
   --install-router-sample     Install router sample to /etc/mavlink-router/main.conf.rocket.sample
-  --enable-battd-service      Create/enable user systemd service for mav_battd
+  --enable-monitoring-service Create/enable user systemd service for monitoringd
   -f, --force                 Overwrite existing config files
   -h, --help                  Show this help
 EOF
@@ -78,8 +78,8 @@ while [[ $# -gt 0 ]]; do
       INSTALL_SYSTEM_CONFIG=1; shift ;;
     --install-router-sample)
       INSTALL_ROUTER_SAMPLE=1; shift ;;
-    --enable-battd-service)
-      ENABLE_BATTD_SERVICE=1; shift ;;
+    --enable-monitoring-service)
+      ENABLE_MONITORING_SERVICE=1; shift ;;
     -f|--force)
       FORCE_OVERWRITE=1; shift ;;
     -h|--help)
@@ -93,12 +93,8 @@ done
 
 mkdir -p "$TOOLS_DIR" "$USER_CFG_DIR"
 
-log "Building binaries..."
-build_binary "$ROOT_DIR/scan/scan_main.c" "$TOOLS_DIR/scan" -lm
-build_binary "$ROOT_DIR/servo_test/servo_test.c" "$TOOLS_DIR/servo_test" -lm
-build_binary "$ROOT_DIR/motor_init/motor_init.c" "$TOOLS_DIR/motor_init" -lm
-build_binary "$ROOT_DIR/mav_batt/mav_battd.c" "$TOOLS_DIR/mav_battd"
-build_binary "$ROOT_DIR/mav_batt/mav_batt.c" "$TOOLS_DIR/mav_batt"
+log "Building binaries (Makefile)..."
+make -C "$ROOT_DIR" install TOOLS_DIR="$TOOLS_DIR"
 
 log "Installing user config..."
 copy_with_guard "$ROOT_DIR/config/ports.env.sample" "$USER_CFG_DIR/ports.env"
@@ -111,27 +107,27 @@ if [[ "$INSTALL_ROUTER_SAMPLE" -eq 1 ]]; then
   run_as_root_install "$ROOT_DIR/config/mavlink-router.main.conf.sample" "/etc/mavlink-router/main.conf.rocket.sample"
 fi
 
-if [[ "$ENABLE_BATTD_SERVICE" -eq 1 ]]; then
+if [[ "$ENABLE_MONITORING_SERVICE" -eq 1 ]]; then
   mkdir -p "$USER_SYSTEMD_DIR"
-  cat >"$USER_SYSTEMD_DIR/mav_battd.service" <<EOF
+  cat >"$USER_SYSTEMD_DIR/monitoringd.service" <<EOF
 [Unit]
-Description=Rocket MAV battery monitor daemon
+Description=Rocket MAV monitoring daemon
 After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$TOOLS_DIR/mav_battd
+ExecStart=$TOOLS_DIR/monitoringd
 Restart=always
 RestartSec=1
 
 [Install]
 WantedBy=default.target
 EOF
-  log "Installed user service: $USER_SYSTEMD_DIR/mav_battd.service"
+  log "Installed user service: $USER_SYSTEMD_DIR/monitoringd.service"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload || true
-    systemctl --user enable --now mav_battd.service || true
-    log "Requested enable/start for user service: mav_battd.service"
+    systemctl --user enable --now monitoringd.service || true
+    log "Requested enable/start for user service: monitoringd.service"
   else
     warn "systemctl not found, skipped service enable"
   fi
@@ -145,6 +141,8 @@ Install completed.
 
 Quick checks:
   $TOOLS_DIR/scan --help
+  $TOOLS_DIR/monitoring --help
+  $TOOLS_DIR/monitoringd --help
   $TOOLS_DIR/servo_test --help
   $TOOLS_DIR/motor_init --help
 

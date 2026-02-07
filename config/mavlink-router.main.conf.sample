@@ -7,7 +7,7 @@ Baud=921600
 FlowControl=true
 
 # Router -> App fan-out
-[UdpEndpoint mav_batt]
+[UdpEndpoint monitoring]
 Mode=Normal
 Address=127.0.0.1
 Port=14550
@@ -28,7 +28,7 @@ Address=127.0.0.1
 Port=14553
 
 # App -> Router ingress
-[UdpEndpoint mav_batt_ingress]
+[UdpEndpoint monitoring_ingress]
 Mode=Server
 Address=127.0.0.1
 Port=14650
