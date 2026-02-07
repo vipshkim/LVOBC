@@ -377,6 +377,7 @@ int main(int argc, char **argv) {
     bool auto_target_sys = true;
     bool auto_target_comp = true;
     bool auto_target_seen = false;
+    bool auto_target_reject_reported = false;
     bool param_src_reported = false;
     int param_req_sent = 0;
     int param_req_recv = 0;
@@ -665,15 +666,29 @@ int main(int argc, char **argv) {
             }
 
             if ((auto_target_sys || auto_target_comp) && !auto_target_seen && message.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
-                if (auto_target_sys) target_sys = message.sysid;
-                if (auto_target_comp) target_comp = message.compid;
-                auto_target_seen = true;
-                printf("%sPARAM%s Auto-detected target from HEARTBEAT: tsys=%d tcomp=%d (src %s)\n",
-                       CLR_YELLOW, CLR_RESET, target_sys, target_comp, src_text);
-                if (auto_target_addr && !serial_mode) {
-                    target_addr = src_addr;
-                    printf("%sPARAM%s Using HEARTBEAT source for param requests: %s\n",
-                           CLR_YELLOW, CLR_RESET, src_text);
+                mavlink_heartbeat_t hb;
+                mavlink_msg_heartbeat_decode(&message, &hb);
+
+                bool is_self = (message.sysid == (uint8_t)sysid && message.compid == (uint8_t)compid);
+                bool looks_like_autopilot = (message.compid == MAV_COMP_ID_AUTOPILOT1);
+
+                if (is_self || !looks_like_autopilot) {
+                    if (!auto_target_reject_reported) {
+                        printf("%sPARAM%s Ignoring non-autopilot HEARTBEAT during auto-target: tsys=%u tcomp=%u type=%u autopilot=%u (src %s)\n",
+                               CLR_YELLOW, CLR_RESET, message.sysid, message.compid, hb.type, hb.autopilot, src_text);
+                        auto_target_reject_reported = true;
+                    }
+                } else {
+                    if (auto_target_sys) target_sys = message.sysid;
+                    if (auto_target_comp) target_comp = message.compid;
+                    auto_target_seen = true;
+                    printf("%sPARAM%s Auto-detected target from HEARTBEAT: tsys=%d tcomp=%d (src %s)\n",
+                           CLR_YELLOW, CLR_RESET, target_sys, target_comp, src_text);
+                    if (auto_target_addr && !serial_mode) {
+                        target_addr = src_addr;
+                        printf("%sPARAM%s Using HEARTBEAT source for param requests: %s\n",
+                               CLR_YELLOW, CLR_RESET, src_text);
+                    }
                 }
             }
 
