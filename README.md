@@ -22,7 +22,7 @@
 - `archive/duplicate_outside_src/`
   - `src` 밖에 있던 과거 중복 소스/바이너리 백업
 - `config/`
-  - 시스템 설정 템플릿(`ports.env.sample`, `mavlink-router.main.conf.sample`)
+  - 시스템 설정 템플릿(`ports.env.sample`, `rate.env.sample`, `mavlink-router.main.conf.sample`)
 - `mavlink_lib/`
   - C MAVLink 헤더 라이브러리
 - `mavlink/`, `mavlink-router/`
@@ -87,8 +87,8 @@ App -> Router (Server/ingress):
 
 설정 우선순위:
 1. 실행 환경변수 (`export KEY=VALUE`)
-2. `~/.config/rocket-mav/ports.env`
-3. `/etc/rocket-mav/ports.env`
+2. `~/.config/rocket-mav/ports.env`, `~/.config/rocket-mav/rate.env`
+3. `/etc/rocket-mav/ports.env`, `/etc/rocket-mav/rate.env`
 4. 코드 기본값
 
 주요 키:
@@ -107,12 +107,32 @@ App -> Router (Server/ingress):
 - `ROCKET_MAV_TOOLS_COMPID`
 - `ROCKET_MAV_TOOLS_TARGET_SYS`
 - `ROCKET_MAV_TOOLS_TARGET_COMP`
+- `ROCKET_MAV_STREAM_ODOM_LISTEN_IP`
+- `ROCKET_MAV_STREAM_ODOM_LISTEN_PORT`
+- `ROCKET_MAV_STREAM_ODOM_OUT_IP`
+- `ROCKET_MAV_STREAM_ODOM_OUT_PORT`
+- `ROCKET_MAV_STREAM_ODOM_RATE_HZ`
+- `ROCKET_MAV_STREAM_ODOM_STATE_PATH`
+- `ROCKET_MAV_STREAM_CMD_LISTEN_IP`
+- `ROCKET_MAV_STREAM_CMD_LISTEN_PORT`
+- `ROCKET_MAV_STREAM_CMD_TARGET_IP`
+- `ROCKET_MAV_STREAM_CMD_TARGET_PORT`
+- `ROCKET_MAV_STREAM_CMD_RATE_HZ`
+- `ROCKET_MAV_STREAM_CMD_STATE_PATH`
 - `ROCKET_MAV_PARAMS_TMP_PATH`
 - `ROCKET_MAV_PARAMS_PERSIST_PATH`
+- `ROCKET_MAV_SCAN_SERIAL_BAUD`
+- `ROCKET_MAV_TOOLS_SERIAL_BAUD`
+- `ROCKET_MAV_STREAM_ODOM_RATE_HZ`
+- `ROCKET_MAV_STREAM_CMD_RATE_HZ`
+- `ROCKET_MAV_STREAM_ODOM_TEST_CONSOLE_BPS`
+- `ROCKET_MAV_STREAM_CMD_TEST_CONSOLE_BPS`
+- `ROCKET_MAV_SERVO_LOOP_HZ`
+- `ROCKET_MAV_MOTOR_LOOP_HZ`
 
 ## 6) 프로그램별 역할 요약
 
-### `scan` (`src/apps/scan/main.c`)
+### `scan` (`src/apps/scan/scan.c`)
 - HEARTBEAT/토픽 스캔
 - `PARAM_REQUEST_LIST` + 누락 index 재요청(`PARAM_REQUEST_READ`)
 - 결과 저장: `/tmp/config.params` + 영구 경로
@@ -129,6 +149,40 @@ App -> Router (Server/ingress):
 ### `monitoringd` (`src/apps/monitoringd/monitoringd.c`)
 - 배터리 + GPS 위성 수 등 MAVLink 메시지 수신
 - `key=value` 형식 문자열을 `/tmp/monitoring_last`에 지속 갱신
+- `RDY` 정책:
+  - HEARTBEAT 상태를 최우선으로 사용
+  - `mode=TEST`에서는 `all_sensors_healthy` 부족만으로 `RDY`를 강등하지 않음
+  - `mode!=TEST`에서만 `all_sensors_healthy` 부족 시 `RDY`를 노랑으로 강등
+- 모드 캐시 갱신:
+  - `mode.env` 변경 감지는 초 단위(`st_mtime`)가 아니라 나노초 단위(`st_mtim`)를 사용
+  - 같은 초 내 모드 전환에서도 tmux 표시가 stale 되지 않도록 수정
+
+### `stream_odometry` (`src/apps/stream_odometry/stream_odometry.c`)
+- MAVLink `ODOMETRY(331)` 수신 후 `/tmp/stream_odometry.latest` 갱신
+- 지정 주기(기본 `100Hz`)로 로컬 UDP 바이너리 스트림 송신
+- 패킷 형식:
+  - `'$'` + `float q[4]`
+  - `float rollspeed, pitchspeed, yawspeed`
+  - `float x, y, z, vx, vy, vz`
+  - `uint8 quality` + `'\n'`
+
+### `stream_commander` (`src/apps/stream_commander/stream_commander.c`)
+- 로컬 UDP 명령 패킷 수신 후 MAVLink actuator 제어 송신
+- `arm` 값이 바뀔 때만 arm/disarm 명령 1회 송신
+- 모터/서보(1,2,3,4,5,6,7,8)는 지정 주기(기본 `100Hz`)로 반복 송신
+- 상태 파일(`ROCKET_MAV_STREAM_CMD_STATE_PATH`)은 속도 우선의 바이너리 포맷(`RSCM`)으로 원자적 갱신
+- 패킷 형식:
+  - `'$'` + `uint8 arm`
+  - `float motor1, motor2, motor3, motor4, servo5, servo6, servo7, servo8`
+  - `'\n'`
+
+### `stream_odometry_test` (`src/apps/stream_odometry/stream_odometry_test.c`)
+- `stream_odometry` UDP 패킷을 파싱해서 콘솔 표시
+- 콘솔 출력은 `5760 b/s` 제한(약 `720 B/s`)으로 과부하 방지
+
+### `stream_commander_test` (`src/apps/stream_commander/stream_commander_test.c`)
+- `stream_commander` 입력 패킷을 파싱해서 콘솔 표시
+- 콘솔 출력은 `5760 b/s` 제한(약 `720 B/s`)으로 과부하 방지
 
 ## 7) 운영 기본 순서
 
@@ -142,6 +196,19 @@ App -> Router (Server/ingress):
 ~/Tools/scan -d 5 -D 20
 ~/Tools/servo_test
 ~/Tools/motor_init
+~/Tools/stream_odometry -q 14554 -r 100
+~/Tools/stream_commander -q 14654 -r 100
+~/Tools/stream_odometry_test -p 14554
+~/Tools/stream_commander_test -p 14654
+```
+
+스트림 데몬 자동실행 설정:
+
+```bash
+cd ~/mavlink_projects
+./scripts/install_rocket_mav.sh \
+  --enable-monitoring-service \
+  --enable-stream-services
 ```
 
 ## 8) 트러블슈팅 핵심
