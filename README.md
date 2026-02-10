@@ -22,7 +22,7 @@
 - `archive/duplicate_outside_src/`
   - `src` 밖에 있던 과거 중복 소스/바이너리 백업
 - `config/`
-  - 시스템 설정 템플릿(`ports.env.sample`, `rate.env.sample`, `mavlink-router.main.conf.sample`)
+  - 시스템 설정 템플릿(`ports.env.sample`, `rate.env.sample`, `servo.env.sample`, `mavlink-router.main.conf.sample`)
 - `mavlink_lib/`
   - C MAVLink 헤더 라이브러리
 - `mavlink/`, `mavlink-router/`
@@ -87,8 +87,8 @@ App -> Router (Server/ingress):
 
 설정 우선순위:
 1. 실행 환경변수 (`export KEY=VALUE`)
-2. `~/.config/rocket-mav/ports.env`, `~/.config/rocket-mav/rate.env`
-3. `/etc/rocket-mav/ports.env`, `/etc/rocket-mav/rate.env`
+2. `~/.config/rocket-mav/ports.env`, `~/.config/rocket-mav/rate.env`, `~/.config/rocket-mav/servo.env`
+3. `/etc/rocket-mav/ports.env`, `/etc/rocket-mav/rate.env`, `/etc/rocket-mav/servo.env`
 4. 코드 기본값
 
 주요 키:
@@ -138,9 +138,10 @@ App -> Router (Server/ingress):
 - 결과 저장: `/tmp/config.params` + 영구 경로
 
 ### `servo_test` (`src/apps/servo_test/servo_test.c`)
-- 강제 ARM -> 서보별 sine 테스트 -> 출력 0 리셋 -> 강제 DISARM
+- `stream_commander` 입력 패킷 경유 서보 테스트
 - Enter로 다음 채널, `q`로 종료
 - 역할명은 config 파라미터(`PWM_MAIN_FUNCx`, `PWM_AUX_FUNCx`)로 표시
+- 스트림 슬롯 매핑은 `ROCKET_MAV_SERVO_TEST_STREAM_MAP`(예: `5,6,7,8`)로 설정 (`servo.env` 권장)
 
 ### `motor_init` (`src/apps/motor_init/motor_init.c`)
 - `servo_test`와 동일한 전송 메커니즘
@@ -169,26 +170,51 @@ App -> Router (Server/ingress):
 ### `stream_commander` (`src/apps/stream_commander/stream_commander.c`)
 - 로컬 UDP 명령 패킷 수신 후 MAVLink actuator 제어 송신
 - `arm` 값이 바뀔 때만 arm/disarm 명령 1회 송신
-- 모터/서보(1,2,3,4,5,6,7,8)는 지정 주기(기본 `100Hz`)로 반복 송신
+- `rc_count > 0`이면 `RC_CHANNELS_OVERRIDE(70)` 송신
+- `act_count > 0`이면 `MAV_CMD_DO_SET_ACTUATOR(187)` 송신
 - 상태 파일(`ROCKET_MAV_STREAM_CMD_STATE_PATH`)은 속도 우선의 바이너리 포맷(`RSCM`)으로 원자적 갱신
-- 패킷 형식:
-  - `'$'` + `uint8 arm`
-  - `float motor1, motor2, motor3, motor4, servo5, servo6, servo7, servo8`
-  - `'\n'`
+- 패킷 형식(리틀엔디안 바이너리):
+  - 시작 토큰: `'$'`
+  - `uint8 arm` (`0|1`)
+  - `uint8 rc_count`
+  - `uint16 rc[rc_count]`
+  - `uint8 act_count`
+  - `float act[act_count]`
+  - `uint8 manual_level` (`0..15`)
+  - `manual_level`에 따른 MANUAL_CONTROL 확장 필드:
+  - `>=1: int16 x`
+  - `>=2: int16 y`
+  - `>=3: int16 z`
+  - `>=4: int16 r`
+  - `>=5: uint16 buttons`
+  - `>=6: uint16 buttons2`
+  - `>=7: uint8 enabled_extensions`
+  - `>=8: int16 s`
+  - `>=9: int16 t`
+  - `>=10: int16 aux1`
+  - `>=11: int16 aux2`
+  - `>=12: int16 aux3`
+  - `>=13: int16 aux4`
+  - `>=14: int16 aux5`
+  - `>=15: int16 aux6`
+  - 종료 토큰: `'\n'`
+- 하위 호환:
+  - 구포맷(`manual_level` 없이 `'\n'` 종료)도 수신 가능
 
 ### `stream_odometry_test` (`src/apps/stream_odometry/stream_odometry_test.c`)
 - `stream_odometry` UDP 패킷을 파싱해서 콘솔 표시
 - 콘솔 출력은 `5760 b/s` 제한(약 `720 B/s`)으로 과부하 방지
 
 ### `stream_commander_test` (`src/apps/stream_commander/stream_commander_test.c`)
-- `stream_commander` 입력 패킷을 파싱해서 콘솔 표시
-- 콘솔 출력은 `5760 b/s` 제한(약 `720 B/s`)으로 과부하 방지
+- `stream_commander` 입력 패킷을 생성/송신하는 테스트 송신기
+- 기본 대상 포트: `15500`
+- `-m`/`-X`/`-Y`/`-Z`/`-R`/`-B`/`-F` 옵션으로 MANUAL_CONTROL 확장 필드 포함 가능
 
 ## 7) 운영 기본 순서
 
 1. `mavlink-router` 구동 확인
 2. `scan` 실행으로 최신 파라미터 동기화
-3. 필요한 도구(`servo_test`, `motor_init`, `monitoringd`) 실행
+3. 필요한 도구(`servo_test`, `motor_init`) 실행 (`monitoringd`/`stream_commander`/`stream_odometry`는 서비스 권장)
 
 예:
 
@@ -196,10 +222,8 @@ App -> Router (Server/ingress):
 ~/Tools/scan -d 5 -D 20
 ~/Tools/servo_test
 ~/Tools/motor_init
-~/Tools/stream_odometry -q 14554 -r 100
-~/Tools/stream_commander -q 14654 -r 100
 ~/Tools/stream_odometry_test -p 14554
-~/Tools/stream_commander_test -p 14654
+~/Tools/stream_commander_test -p 15500
 ```
 
 스트림 데몬 자동실행 설정:
@@ -220,6 +244,7 @@ cd ~/mavlink_projects
 - `No parameters received`면:
   - 먼저 `scan`으로 `/tmp/config.params` 생성 확인
   - `~/.config/rocket-mav/ports.env` 값이 실제 router 설정과 일치하는지 확인
+  - `ROCKET_MAV_SERVO_TEST_STREAM_MAP`은 `~/.config/rocket-mav/servo.env`에 두는 것을 권장
 
 ## 9) Git 정리 안내
 

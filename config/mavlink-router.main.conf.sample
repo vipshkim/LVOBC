@@ -12,12 +12,13 @@ Mode=Normal
 Address=127.0.0.1
 Port=14550
 
-[UdpEndpoint mav_controller]
+# stream pair: odometry receive (router -> app)
+[UdpEndpoint stream_odometry]
 Mode=Normal
 Address=127.0.0.1
 Port=14551
 
-[UdpEndpoint mav_console]
+[UdpEndpoint console]
 Mode=Normal
 Address=127.0.0.1
 Port=14552
@@ -28,17 +29,13 @@ Address=127.0.0.1
 Port=14553
 
 # App -> Router ingress
-[UdpEndpoint monitoring_ingress]
-Mode=Server
-Address=127.0.0.1
-Port=14650
-
-[UdpEndpoint mav_controller_ingress]
+# stream pair: commander send (app -> router)
+[UdpEndpoint stream_commander_ingress]
 Mode=Server
 Address=127.0.0.1
 Port=14651
 
-[UdpEndpoint mav_console_ingress]
+[UdpEndpoint console_ingress]
 Mode=Server
 Address=127.0.0.1
 Port=14652
@@ -47,8 +44,3 @@ Port=14652
 Mode=Server
 Address=127.0.0.1
 Port=14653
-
-[UdpEndpoint tools_ingress]
-Mode=Server
-Address=127.0.0.1
-Port=14660
