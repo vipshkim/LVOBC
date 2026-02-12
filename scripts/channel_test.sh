@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DEST_IP="${DEST_IP:-127.0.0.1}"
-DEST_PORT="${DEST_PORT:-15500}"
+DEST_PORT="${DEST_PORT:-14531}"
 RC_COUNT="${RC_COUNT:-8}"
 STEP="${STEP:-0.1}"
 SEND_HZ="${SEND_HZ:-20}"

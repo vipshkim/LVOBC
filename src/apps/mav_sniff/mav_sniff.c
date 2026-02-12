@@ -21,7 +21,7 @@
 #include <mavlink.h>
 
 #define DEFAULT_IP "127.0.0.1"
-#define DEFAULT_PORT 14651
+#define DEFAULT_PORT 14631
 
 static volatile sig_atomic_t g_running = 1;
 

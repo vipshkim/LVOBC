@@ -16,12 +16,13 @@
 
 #include <mavlink.h>
 
+#include "rocket_common.h"
 #include "rocket_mav_common.h"
 
 #define DEFAULT_LISTEN_IP "127.0.0.1"
-#define DEFAULT_LISTEN_PORT 15500
+#define DEFAULT_LISTEN_PORT 14531
 #define DEFAULT_TARGET_IP MAV_DEFAULT_IP
-#define DEFAULT_TARGET_PORT 14651
+#define DEFAULT_TARGET_PORT 14631
 #define DEFAULT_STATE_PATH "/tmp/stream_commander.latest"
 #define DEFAULT_MANUAL_KEEPALIVE_HZ 10.0
 
@@ -407,6 +408,13 @@ int main(int argc, char **argv) {
     if (manual_keepalive_hz <= 0.0) manual_keepalive_hz = DEFAULT_MANUAL_KEEPALIVE_HZ;
     double manual_period = 1.0 / manual_keepalive_hz;
 
+    char lock_err[160];
+    int lock_fd = rocket_single_instance_acquire("stream_commander", lock_err, sizeof(lock_err));
+    if (lock_fd < 0) {
+        fprintf(stderr, "stream_commander: %s\n", lock_err[0] ? lock_err : "single-instance lock failed");
+        return 1;
+    }
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
@@ -510,5 +518,6 @@ int main(int argc, char **argv) {
 
     close(tx_fd);
     close(rx_fd);
+    rocket_single_instance_release(lock_fd);
     return 0;
 }

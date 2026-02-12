@@ -14,7 +14,7 @@
 #include "rocket_mav_common.h"
 
 #define DEFAULT_DEST_IP "127.0.0.1"
-#define DEFAULT_DEST_PORT 15500
+#define DEFAULT_DEST_PORT 14531
 #define DEFAULT_ARM 0
 #define DEFAULT_HZ 20.0
 #define DEFAULT_DURATION 10.0

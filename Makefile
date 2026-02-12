@@ -7,7 +7,7 @@ BASH_COMPLETION_DIR ?= $(HOME)/.local/share/bash-completion/completions
 
 CC ?= gcc
 CFLAGS ?= -O2 -g -Wall -Wextra
-INCLUDES := -I$(ROOT_DIR)/mavlink_lib/common -I$(SRC_DIR)/common
+INCLUDES := -I$(ROOT_DIR)/mavlink_lib/common -I$(ROOT_DIR)/mavlink_lib -I$(SRC_DIR)/common
 LDLIBS ?= -lm
 
 APP_DIRS := $(wildcard $(SRC_DIR)/apps/*)

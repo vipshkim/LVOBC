@@ -45,9 +45,10 @@ typedef struct {
 static const mode_param_t k_mode_params[] = {
     // LaunchVehicle test-mode whitelist: only these are altered by `mode test`.
     {"COM_ARM_WO_GPS", 1, 0},
-    {"COM_RC_IN_MODE", 1, 0},
+    {"COM_RC_IN_MODE", 5, 0},
     {"NAV_DLL_ACT", 0, 0},
     {"CBRK_IO_SAFETY", 22027, 1},
+    {"CBRK_SUPPLY_CHK", 894281, 1},
     {"COM_ARM_HFLT_CHK", 0, 0},
     {"COM_ARM_MAG_ANG", -1, 0},
     {"COM_ARM_MAG_STR", 0, 0},
@@ -522,7 +523,7 @@ int main(int argc, char **argv) {
     default_mode_path(mode_path, sizeof(mode_path));
 
     const char *target_ip = mav_cfg_get_str(MAV_CFG_KEY_SCAN_TARGET_IP, MAV_DEFAULT_IP);
-    int target_port = mav_cfg_get_int(MAV_CFG_KEY_SCAN_TARGET_PORT, 14653);
+    int target_port = mav_cfg_get_int(MAV_CFG_KEY_SCAN_TARGET_PORT, 15641);
     int target_sys = mav_cfg_get_int(MAV_CFG_KEY_SCAN_TARGET_SYS, MAV_DEFAULT_TARGET_SYS);
     int target_comp = mav_cfg_get_int(MAV_CFG_KEY_SCAN_TARGET_COMP, MAV_DEFAULT_TARGET_COMP);
     int sysid = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_SYSID, MAV_DEFAULT_SYSID);

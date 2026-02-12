@@ -38,7 +38,7 @@ make install
 ## 옵션
 - `-n <count>`: 모터 개수 강제 지정
 - `-u <ip>`: 대상 IP (기본: `ROCKET_MAV_TOOLS_TARGET_IP` 또는 `127.0.0.1`)
-- `-p <port>`: 대상 포트 (기본: `ROCKET_MAV_TOOLS_TARGET_PORT` 또는 `14550`)
+- `-p <port>`: 대상 포트 (기본: `ROCKET_MAV_TOOLS_TARGET_PORT` 또는 `15651`)
 - `-s <sysid>`: 송신 sysid (기본: `ROCKET_MAV_TOOLS_SYSID` 또는 `255`)
 - `-c2 <compid>`: 송신 compid (기본: `ROCKET_MAV_TOOLS_COMPID` 또는 `190`)
 - `-t <tsys>`: 대상 sysid (기본: `ROCKET_MAV_TOOLS_TARGET_SYS` 또는 `1`)

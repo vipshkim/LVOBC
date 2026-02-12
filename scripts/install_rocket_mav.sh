@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOLS_DIR="${TOOLS_DIR:-$HOME/Tools}"
+DAEMON_DIR="${DAEMON_DIR:-$HOME/.local/libexec/rocket-mav}"
 USER_CFG_DIR="${USER_CFG_DIR:-$HOME/.config/rocket-mav}"
 USER_SYSTEMD_DIR="${USER_SYSTEMD_DIR:-$HOME/.config/systemd/user}"
+DAEMON_APP_NAMES=("monitoringd" "stream_odometry" "stream_commander")
 
 INSTALL_SYSTEM_CONFIG=0
 INSTALL_ROUTER_SAMPLE=0
@@ -22,6 +24,7 @@ Build and install runtime files for rocket MAVLink tools.
 
 Options:
   --tools-dir <path>          Install binaries to this directory (default: ~/Tools)
+  --daemon-dir <path>         Install daemon binaries to this directory (default: ~/.local/libexec/rocket-mav)
   --user-config-dir <path>    Install user config to this directory (default: ~/.config/rocket-mav)
   --install-system-config     Install ports.env + rate.env + servo.env to /etc/rocket-mav/
   --install-router-sample     Install router sample to /etc/mavlink-router/main.conf.rocket.sample
@@ -112,6 +115,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tools-dir)
       TOOLS_DIR="$2"; shift 2 ;;
+    --daemon-dir)
+      DAEMON_DIR="$2"; shift 2 ;;
     --user-config-dir)
       USER_CFG_DIR="$2"; shift 2 ;;
     --install-system-config)
@@ -137,10 +142,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$TOOLS_DIR" "$USER_CFG_DIR"
+mkdir -p "$TOOLS_DIR" "$USER_CFG_DIR" "$DAEMON_DIR"
 
 log "Building binaries (Makefile)..."
 make -C "$ROOT_DIR" install TOOLS_DIR="$TOOLS_DIR"
+
+log "Installing daemon binaries..."
+for daemon in "${DAEMON_APP_NAMES[@]}"; do
+  src="$ROOT_DIR/build/bin/$daemon"
+  if [[ -x "$src" ]]; then
+    install -m 0755 "$src" "$DAEMON_DIR/"
+    log "Installed daemon: $DAEMON_DIR/$daemon"
+  else
+    warn "Missing daemon binary: $src"
+  fi
+done
 
 log "Installing user config..."
 copy_with_guard "$ROOT_DIR/config/ports.env.sample" "$USER_CFG_DIR/ports.env"
@@ -166,7 +182,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$TOOLS_DIR/monitoringd
+ExecStart=$DAEMON_DIR/monitoringd
 Restart=always
 RestartSec=1
 
@@ -185,7 +201,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$TOOLS_DIR/stream_odometry
+ExecStart=$DAEMON_DIR/stream_odometry
 Restart=always
 RestartSec=1
 
@@ -201,7 +217,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$TOOLS_DIR/stream_commander
+ExecStart=$DAEMON_DIR/stream_commander
 Restart=always
 RestartSec=1
 

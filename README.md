@@ -56,17 +56,17 @@ make build
 - Pixhawk: `/dev/ttyAMA0 @ 921600`
 
 Router -> App (Normal/fan-out):
-- `14550`: `monitoring`
-- `14551`: `mav_controller`
-- `14552`: `mav_console`
-- `14553`: `scan`
+- `14511`: `monitoring`
+- `14521`: `stream_odometry`
+- `15551`: `console`
+- `15541`: `scan`
+- `15561`: `arm_reason`
+- `14532`: `stream_commander_feedback`
 
 App -> Router (Server/ingress):
-- `14650`: `monitoring_ingress`
-- `14651`: `mav_controller_ingress`
-- `14652`: `mav_console_ingress`
-- `14653`: `scan_ingress`
-- `14660`: 임시 도구(`servo_test`, `motor_init`)
+- `14631`: `stream_commander_ingress`
+- `15651`: `console_ingress`
+- `15641`: `scan_ingress`
 
 ## 4) 데이터 파일 정책
 
@@ -207,8 +207,25 @@ App -> Router (Server/ingress):
 
 ### `stream_commander_test` (`src/apps/stream_commander/stream_commander_test.c`)
 - `stream_commander` 입력 패킷을 생성/송신하는 테스트 송신기
-- 기본 대상 포트: `15500`
+- 기본 대상 포트: `14531`
+
+### `arm_reason` (`src/apps/arm_reason/arm_reason.c`)
+- arming 실패 이유를 `STATUSTEXT`/`COMMAND_ACK`로 표시하는 진단 도구
 - `-m`/`-X`/`-Y`/`-Z`/`-R`/`-B`/`-F` 옵션으로 MANUAL_CONTROL 확장 필드 포함 가능
+
+### `commander` (`src/apps/commander/main.c`)
+- PX4 `commander` 스타일 명령을 MAVLink `COMMAND_LONG`로 전송
+- 주요 명령: `arm`, `disarm`, `takeoff`, `land`, `rtl`, `mode <NAME>`, `sethome`, `reboot`, `shutdown`, `mavcmd`
+- 예:
+  - `commander arm`
+  - `commander takeoff --alt 5`
+  - `commander mode POSCTL`
+
+### `listen` (`src/apps/listen/listen.c`)
+- 특정 MAVLink 메시지 이름/ID만 필터링해서 최신 값을 콘솔에 출력
+- 기본 수신 포트: `ROCKET_MAV_TOOLS_LISTEN_PORT` (`15551`, router의 `console` 출력)
+- 예: `listen HEARTBEAT -d 1`
+- `-F` 옵션: `HEARTBEAT.base_mode`를 `MAV_MODE_FLAG_*` 이름으로 확장 표시
 
 ## 7) 운영 기본 순서
 
@@ -222,8 +239,8 @@ App -> Router (Server/ingress):
 ~/Tools/scan -d 5 -D 20
 ~/Tools/servo_test
 ~/Tools/motor_init
-~/Tools/stream_odometry_test -p 14554
-~/Tools/stream_commander_test -p 15500
+~/Tools/stream_odometry_test -p 14622
+~/Tools/stream_commander_test -p 14531
 ```
 
 스트림 데몬 자동실행 설정:
@@ -238,7 +255,7 @@ cd ~/mavlink_projects
 ## 8) 트러블슈팅 핵심
 
 - 파라미터가 안 오면:
-  - 포트 매핑(`14553/14653`) 확인
+  - 포트 매핑(`15541/15641`) 확인
   - router 점유/중복 수신 경로 확인
   - 필요시 `scan -S /dev/ttyAMA0 -B 921600` 직접 테스트
 - `No parameters received`면:

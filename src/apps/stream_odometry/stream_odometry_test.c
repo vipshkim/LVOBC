@@ -17,11 +17,9 @@
 #include "rocket_mav_common.h"
 
 #define DEFAULT_LISTEN_IP "127.0.0.1"
-#define DEFAULT_LISTEN_PORT 14554
-#define START_TOKEN ((uint8_t)'$')
-#define END_TOKEN ((uint8_t)'\n')
+#define DEFAULT_LISTEN_PORT 14622
 #define ODOM_FLOAT_COUNT 13
-#define ODOM_PACKET_SIZE (1 + ODOM_FLOAT_COUNT * (int)sizeof(float) + 1 + 1)
+#define ODOM_PACKET_SIZE (ODOM_FLOAT_COUNT * (int)sizeof(float))
 #define DEFAULT_CONSOLE_BYTES_PER_SEC 5760.0
 #define DEFAULT_PRINT_HZ 20.0
 #define COMMAND_FLOAT_COUNT 8
@@ -65,23 +63,36 @@ static int setup_udp_listener(const char *ip, int port) {
     return fd;
 }
 
+static float read_f32_le(const uint8_t *src) {
+    uint8_t raw[sizeof(float)];
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    raw[0] = src[0];
+    raw[1] = src[1];
+    raw[2] = src[2];
+    raw[3] = src[3];
+#else
+    raw[0] = src[3];
+    raw[1] = src[2];
+    raw[2] = src[1];
+    raw[3] = src[0];
+#endif
+    float out = 0.0f;
+    memcpy(&out, raw, sizeof(out));
+    return out;
+}
+
 static int parse_packet(const uint8_t *buf, size_t n,
                         float q[4], float *rollspeed, float *pitchspeed, float *yawspeed,
                         float *x, float *y, float *z,
-                        float *vx, float *vy, float *vz,
-                        uint8_t *quality) {
+                        float *vx, float *vy, float *vz) {
     if (n != ODOM_PACKET_SIZE) return 0;
-    if (buf[0] != START_TOKEN) return 0;
-    if (buf[ODOM_PACKET_SIZE - 1] != END_TOKEN) return 0;
 
-    size_t off = 1;
+    size_t off = 0;
     float fields[ODOM_FLOAT_COUNT];
     for (size_t i = 0; i < ODOM_FLOAT_COUNT; ++i) {
-        memcpy(&fields[i], buf + off, sizeof(float));
+        fields[i] = read_f32_le(buf + off);
         off += sizeof(float);
     }
-
-    *quality = buf[off];
 
     q[0] = fields[0];
     q[1] = fields[1];
@@ -265,14 +276,15 @@ int main(int argc, char **argv) {
     double max_tokens = byte_rate;
     double last_refill = monotonic_seconds();
     const double print_period = 1.0 / print_hz;
+    const double stale_sec = 1.0;
     double next_print = monotonic_seconds();
     unsigned dropped_updates = 0;
     int have_data = 0;
+    double last_rx = 0.0;
     float q[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float rollspeed = 0.0f, pitchspeed = 0.0f, yawspeed = 0.0f;
     float x = 0.0f, y = 0.0f, z = 0.0f;
     float vx = 0.0f, vy = 0.0f, vz = 0.0f;
-    uint8_t quality = 0;
     uint8_t cmd_arm = 0;
     float cmd_vals[COMMAND_FLOAT_COUNT] = {0};
     uint8_t cmd_rc_count = 0;
@@ -306,8 +318,9 @@ int main(int argc, char **argv) {
                 if (errno == EINTR) continue;
             } else {
                 if (parse_packet(buf, (size_t)n, q, &rollspeed, &pitchspeed, &yawspeed,
-                                 &x, &y, &z, &vx, &vy, &vz, &quality)) {
+                                 &x, &y, &z, &vx, &vy, &vz)) {
                     have_data = 1;
+                    last_rx = monotonic_seconds();
                 }
             }
         }
@@ -318,14 +331,13 @@ int main(int argc, char **argv) {
             char line2[200];
             have_cmd = load_stream_command_state(stream_cmd_state_path, &cmd_arm, cmd_vals,
                                                   &cmd_rc_count, cmd_rc_vals);
-            if (have_data) {
+            if (have_data && (now - last_rx) <= stale_sec) {
                 snprintf(line1, sizeof(line1),
-                         "q=[%+7.3f %+7.3f %+7.3f %+7.3f] rpy_rate=[%+7.3f %+7.3f %+7.3f] pos=[%+7.3f %+7.3f %+7.3f] vel=[%+7.3f %+7.3f %+7.3f] qual=%u",
+                         "q=[%+7.3f %+7.3f %+7.3f %+7.3f] rpy_rate=[%+7.3f %+7.3f %+7.3f] pos=[%+7.3f %+7.3f %+7.3f] vel=[%+7.3f %+7.3f %+7.3f]",
                          q[0], q[1], q[2], q[3],
                          rollspeed, pitchspeed, yawspeed,
                          x, y, z,
-                         vx, vy, vz,
-                         (unsigned)quality);
+                         vx, vy, vz);
             } else {
                 snprintf(line1, sizeof(line1), "waiting odometry packet...");
             }
@@ -370,7 +382,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("\n");
+    /* Clear the two-line live view before returning to shell prompt. */
+    printf("\r\033[K\n\033[K\n");
+    fflush(stdout);
     close(fd);
     return 0;
 }

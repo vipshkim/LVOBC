@@ -20,19 +20,19 @@
 #include <unistd.h>
 
 #include <mavlink.h>
+#include "rocket_common.h"
 #include "rocket_mav_common.h"
 
 #define DEFAULT_MAV_IP MAV_DEFAULT_IP
 #define DEFAULT_MAV_PORT MAV_DEFAULT_PORT
 #define DEFAULT_OUT_IP "127.0.0.1"
-#define DEFAULT_OUT_PORT 14554
 #define DEFAULT_RATE_HZ 100.0
 #define DEFAULT_STATE_PATH "/tmp/stream_odometry.latest"
+#define ODOM_REQUEST_RETRY_SEC 1.0
+#define ODOM_REQUEST_INTERVAL_US 10000.0f /* 100 Hz */
 
-#define START_TOKEN ((uint8_t)'$')
-#define END_TOKEN ((uint8_t)'\n')
 #define ODOM_FLOAT_COUNT 13
-#define ODOM_PACKET_SIZE (1 + ODOM_FLOAT_COUNT * (int)sizeof(float) + 1 + 1)
+#define ODOM_PACKET_SIZE (ODOM_FLOAT_COUNT * (int)sizeof(float))
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -63,6 +63,22 @@ static double monotonic_seconds(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
+static void write_f32_le(uint8_t *dst, float value) {
+    uint8_t raw[sizeof(float)];
+    memcpy(raw, &value, sizeof(raw));
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    dst[0] = raw[0];
+    dst[1] = raw[1];
+    dst[2] = raw[2];
+    dst[3] = raw[3];
+#else
+    dst[0] = raw[3];
+    dst[1] = raw[2];
+    dst[2] = raw[1];
+    dst[3] = raw[0];
+#endif
+}
+
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s [options]\n"
@@ -70,7 +86,7 @@ static void usage(const char *prog) {
         "  -u <ip>        MAVLink input listen IP (default %s)\n"
         "  -p <port>      MAVLink input listen port (default %d)\n"
         "  -o <ip>        UDP output IP (default %s)\n"
-        "  -q <port>      UDP output port (default %d)\n"
+        "  -q <port>      UDP output port (default from %s)\n"
         "  -r <hz>        Stream rate in Hz (default %.1f)\n"
         "  -f <path>      /tmp state file path (default %s)\n"
         "  -h             Show this help\n",
@@ -78,7 +94,7 @@ static void usage(const char *prog) {
         DEFAULT_MAV_IP,
         DEFAULT_MAV_PORT,
         DEFAULT_OUT_IP,
-        DEFAULT_OUT_PORT,
+        MAV_CFG_KEY_STREAM_ODOM_OUT_PORT,
         DEFAULT_RATE_HZ,
         DEFAULT_STATE_PATH);
 }
@@ -143,7 +159,6 @@ static void save_state_file(const char *path, const odom_state_t *s) {
 
 static void fill_odom_packet(const odom_state_t *s, uint8_t *pkt) {
     size_t off = 0;
-    pkt[off++] = START_TOKEN;
 
     const float fields[ODOM_FLOAT_COUNT] = {
         s->q[0], s->q[1], s->q[2], s->q[3],
@@ -153,12 +168,9 @@ static void fill_odom_packet(const odom_state_t *s, uint8_t *pkt) {
     };
 
     for (size_t i = 0; i < ODOM_FLOAT_COUNT; ++i) {
-        memcpy(pkt + off, &fields[i], sizeof(float));
+        write_f32_le(pkt + off, fields[i]);
         off += sizeof(float);
     }
-
-    pkt[off++] = s->quality;
-    pkt[off++] = END_TOKEN;
 }
 
 static void update_from_odometry(odom_state_t *s, const mavlink_odometry_t *o) {
@@ -182,6 +194,19 @@ static void update_from_odometry(odom_state_t *s, const mavlink_odometry_t *o) {
     s->valid = 1;
 }
 
+static void send_message_interval_request(int sock, const struct sockaddr_in *dest,
+                                          int sysid, int compid, int target_sys, int target_comp,
+                                          uint16_t msgid, float interval_us) {
+    mavlink_message_t msg;
+    uint8_t tx[MAVLINK_MAX_PACKET_LEN];
+    mavlink_msg_command_long_pack((uint8_t)sysid, (uint8_t)compid, &msg,
+                                  (uint8_t)target_sys, (uint8_t)target_comp,
+                                  MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                                  (float)msgid, interval_us, 0, 0, 0, 0, 0);
+    uint16_t tx_len = mavlink_msg_to_send_buffer(tx, &msg);
+    (void)sendto(sock, tx, tx_len, 0, (const struct sockaddr *)dest, sizeof(*dest));
+}
+
 int main(int argc, char **argv) {
     const char *listen_ip = mav_cfg_get_str(
         MAV_CFG_KEY_STREAM_ODOM_LISTEN_IP,
@@ -190,7 +215,15 @@ int main(int argc, char **argv) {
         MAV_CFG_KEY_STREAM_ODOM_LISTEN_PORT,
         mav_cfg_get_int(MAV_CFG_KEY_SCAN_LISTEN_PORT, DEFAULT_MAV_PORT));
     const char *out_ip = mav_cfg_get_str(MAV_CFG_KEY_STREAM_ODOM_OUT_IP, DEFAULT_OUT_IP);
-    int out_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_ODOM_OUT_PORT, DEFAULT_OUT_PORT);
+    int out_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_ODOM_OUT_PORT, -1);
+    const char *test_out_ip = mav_cfg_get_str(MAV_CFG_KEY_STREAM_ODOM_TEST_LISTEN_IP, out_ip);
+    int test_out_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_ODOM_TEST_LISTEN_PORT, -1);
+    const char *req_ip = mav_cfg_get_str(MAV_CFG_KEY_TOOLS_TARGET_IP, "127.0.0.1");
+    int req_port = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_PORT, 15651);
+    int req_sysid = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_SYSID, MAV_DEFAULT_SYSID);
+    int req_compid = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_COMPID, MAV_DEFAULT_COMPID);
+    int req_target_sys = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_SYS, MAV_DEFAULT_TARGET_SYS);
+    int req_target_comp = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_COMP, MAV_DEFAULT_TARGET_COMP);
     double rate_hz = mav_cfg_get_double(MAV_CFG_KEY_STREAM_ODOM_RATE_HZ, DEFAULT_RATE_HZ);
     const char *state_path = mav_cfg_get_str(MAV_CFG_KEY_STREAM_ODOM_STATE_PATH, DEFAULT_STATE_PATH);
 
@@ -216,8 +249,20 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (out_port <= 0) {
+        fprintf(stderr, "Missing %s in ports.env\n", MAV_CFG_KEY_STREAM_ODOM_OUT_PORT);
+        return 1;
+    }
+
     if (rate_hz <= 0.0 || !isfinite(rate_hz)) {
         fprintf(stderr, "Invalid rate: %f\n", rate_hz);
+        return 1;
+    }
+
+    char lock_err[160];
+    int lock_fd = rocket_single_instance_acquire("stream_odometry", lock_err, sizeof(lock_err));
+    if (lock_fd < 0) {
+        fprintf(stderr, "stream_odometry: %s\n", lock_err[0] ? lock_err : "single-instance lock failed");
         return 1;
     }
 
@@ -238,11 +283,38 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("stream_odometry: in=%s:%d out=%s:%d rate=%.2fHz state=%s\n",
-           listen_ip, listen_port, out_ip, out_port, rate_hz, state_path);
+    int test_tx_enabled = 0;
+    int test_tx_fd = -1;
+    struct sockaddr_in test_tx_addr;
+    if (test_out_port > 0 && !(test_out_port == out_port && strcmp(test_out_ip, out_ip) == 0)) {
+        test_tx_fd = setup_udp_sender(&test_tx_addr, test_out_ip, test_out_port);
+        if (test_tx_fd < 0) {
+            fprintf(stderr, "Failed to setup test UDP sender %s:%d\n", test_out_ip, test_out_port);
+            close(tx_fd);
+            close(rx_fd);
+            return 1;
+        }
+        test_tx_enabled = 1;
+    }
+
+    if (test_tx_enabled) {
+        printf("stream_odometry: in=%s:%d out=%s:%d test_out=%s:%d rate=%.2fHz state=%s\n",
+               listen_ip, listen_port, out_ip, out_port, test_out_ip, test_out_port, rate_hz, state_path);
+    } else {
+        printf("stream_odometry: in=%s:%d out=%s:%d rate=%.2fHz state=%s\n",
+               listen_ip, listen_port, out_ip, out_port, rate_hz, state_path);
+    }
 
     const double period = 1.0 / rate_hz;
     double next_tx = monotonic_seconds() + period;
+    double last_odom_rx = 0.0;
+    double last_odom_req = 0.0;
+
+    struct sockaddr_in req_addr;
+    int req_fd = setup_udp_sender(&req_addr, req_ip, req_port);
+    if (req_fd < 0) {
+        fprintf(stderr, "stream_odometry: warning: failed to setup request sender %s:%d\n", req_ip, req_port);
+    }
 
     odom_state_t state;
     memset(&state, 0, sizeof(state));
@@ -288,16 +360,33 @@ int main(int argc, char **argv) {
                     mavlink_odometry_t odom;
                     mavlink_msg_odometry_decode(&msg, &odom);
                     update_from_odometry(&state, &odom);
+                    last_odom_rx = monotonic_seconds();
                     save_state_file(state_path, &state);
                 }
             }
         }
 
         now = monotonic_seconds();
+        if (req_fd >= 0 && (last_odom_rx <= 0.0 || (now - last_odom_rx) >= ODOM_REQUEST_RETRY_SEC)) {
+            if (last_odom_req <= 0.0 || (now - last_odom_req) >= ODOM_REQUEST_RETRY_SEC) {
+                send_message_interval_request(req_fd, &req_addr,
+                                              req_sysid, req_compid,
+                                              req_target_sys, req_target_comp,
+                                              MAVLINK_MSG_ID_ODOMETRY,
+                                              ODOM_REQUEST_INTERVAL_US);
+                last_odom_req = now;
+            }
+        }
+
         if (now >= next_tx) {
-            uint8_t pkt[ODOM_PACKET_SIZE];
-            fill_odom_packet(&state, pkt);
-            sendto(tx_fd, pkt, sizeof(pkt), 0, (const struct sockaddr *)&tx_addr, sizeof(tx_addr));
+            if (state.valid) {
+                uint8_t pkt[ODOM_PACKET_SIZE];
+                fill_odom_packet(&state, pkt);
+                sendto(tx_fd, pkt, sizeof(pkt), 0, (const struct sockaddr *)&tx_addr, sizeof(tx_addr));
+                if (test_tx_enabled) {
+                    sendto(test_tx_fd, pkt, sizeof(pkt), 0, (const struct sockaddr *)&test_tx_addr, sizeof(test_tx_addr));
+                }
+            }
 
             double periods = floor((now - next_tx) / period) + 1.0;
             if (periods < 1.0) periods = 1.0;
@@ -305,7 +394,10 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (test_tx_fd >= 0) close(test_tx_fd);
+    if (req_fd >= 0) close(req_fd);
     close(tx_fd);
     close(rx_fd);
+    rocket_single_instance_release(lock_fd);
     return 0;
 }

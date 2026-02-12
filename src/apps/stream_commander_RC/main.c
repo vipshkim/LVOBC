@@ -53,7 +53,6 @@ static int enable_raw_mode(void) {
     tio = g_old_tio;
     tio.c_lflag &= ~(ICANON | ECHO);
     tio.c_iflag &= ~(IXON | ICRNL);
-    tio.c_oflag &= ~(OPOST);
     tio.c_cc[VMIN] = 0;
     tio.c_cc[VTIME] = 0;
     return tcsetattr(STDIN_FILENO, TCSAFLUSH, &tio);
@@ -160,7 +159,7 @@ int main(int argc, char **argv) {
     (void)argv;
 
     const char *dest_ip = mav_cfg_get_str(MAV_CFG_KEY_STREAM_CMD_LISTEN_IP, "127.0.0.1");
-    int dest_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_LISTEN_PORT, 15500);
+    int dest_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_LISTEN_PORT, 14531);
     double send_hz = DEFAULT_SEND_HZ;
     double period = 1.0 / send_hz;
 

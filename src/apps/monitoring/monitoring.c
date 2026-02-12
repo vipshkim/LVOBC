@@ -22,7 +22,7 @@
 #include "rocket_mav_common.h"
 
 #define DEFAULT_LISTEN_IP   "127.0.0.1"
-#define DEFAULT_LISTEN_PORT 14550
+#define DEFAULT_LISTEN_PORT 14511
 #define MAX_WAIT_SEC 0.25
 #define SELECT_TIMEOUT 0.05
 #define DEFAULT_MODE_STATE_PATH "/tmp/rocket-mav-mode.env"

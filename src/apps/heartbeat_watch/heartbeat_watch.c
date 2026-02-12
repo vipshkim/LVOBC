@@ -22,7 +22,7 @@
 #include "rocket_mav_common.h"
 
 #define DEFAULT_LISTEN_IP MAV_DEFAULT_IP
-#define DEFAULT_LISTEN_PORT 14552
+#define DEFAULT_LISTEN_PORT 15552
 #define SELECT_TIMEOUT_SEC 0.25
 
 static volatile sig_atomic_t g_running = 1;

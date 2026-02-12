@@ -1,8 +1,12 @@
 #include "rocket_common.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 #include <mavlink.h>
 
@@ -81,4 +85,60 @@ int rocket_param_value_matches(uint8_t type, float actual, double expected, doub
         return fabs(decoded - expected) < eps;
     }
     return llround(decoded) == llround(expected);
+}
+
+int rocket_single_instance_acquire(const char *name, char *err, size_t err_len) {
+    if (!name || !name[0]) {
+        if (err && err_len > 0) snprintf(err, err_len, "invalid lock name");
+        return -1;
+    }
+
+    char lock_path[256];
+    snprintf(lock_path, sizeof(lock_path), "/tmp/%s.lock", name);
+
+    int fd = open(lock_path, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) {
+        if (errno == EACCES) {
+            if (err && err_len > 0) {
+                snprintf(err, err_len, "already running or locked by another user (%s)", lock_path);
+            }
+            return -1;
+        }
+        if (err && err_len > 0) {
+            snprintf(err, err_len, "open(%s): %s", lock_path, strerror(errno));
+        }
+        return -1;
+    }
+
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        int saved = errno;
+        if (err && err_len > 0) {
+            if (saved == EWOULDBLOCK || saved == EAGAIN) {
+                snprintf(err, err_len, "already running (%s locked)", lock_path);
+            } else {
+                snprintf(err, err_len, "flock(%s): %s", lock_path, strerror(saved));
+            }
+        }
+        close(fd);
+        return -1;
+    }
+
+    int flags = fcntl(fd, F_GETFD);
+    if (flags >= 0) (void)fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+
+    (void)ftruncate(fd, 0);
+    {
+        char pidbuf[32];
+        int n = snprintf(pidbuf, sizeof(pidbuf), "%ld\n", (long)getpid());
+        if (n > 0) (void)write(fd, pidbuf, (size_t)n);
+    }
+
+    if (err && err_len > 0) err[0] = '\0';
+    return fd;
+}
+
+void rocket_single_instance_release(int lock_fd) {
+    if (lock_fd >= 0) {
+        (void)close(lock_fd);
+    }
 }
