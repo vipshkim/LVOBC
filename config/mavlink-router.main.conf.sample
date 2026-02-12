@@ -10,45 +10,47 @@ FlowControl=true
 [UdpEndpoint monitoring]
 Mode=Normal
 Address=127.0.0.1
-Port=14550
+Port=14511
 
-[UdpEndpoint mav_controller]
+# stream pair: odometry receive (router -> app)
+[UdpEndpoint stream_odometry]
 Mode=Normal
 Address=127.0.0.1
-Port=14551
+Port=14521
 
-[UdpEndpoint mav_console]
+[UdpEndpoint console]
 Mode=Normal
 Address=127.0.0.1
-Port=14552
+Port=15551
 
 [UdpEndpoint scan]
 Mode=Normal
 Address=127.0.0.1
-Port=14553
+Port=15541
+
+[UdpEndpoint arm_reason]
+Mode=Normal
+Address=127.0.0.1
+Port=15561
+
+[UdpEndpoint stream_commander_feedback]
+Mode=Normal
+Address=127.0.0.1
+Port=14532
 
 # App -> Router ingress
-[UdpEndpoint monitoring_ingress]
+# stream pair: commander send (app -> router)
+[UdpEndpoint stream_commander_ingress]
 Mode=Server
 Address=127.0.0.1
-Port=14650
+Port=14631
 
-[UdpEndpoint mav_controller_ingress]
+[UdpEndpoint console_ingress]
 Mode=Server
 Address=127.0.0.1
-Port=14651
-
-[UdpEndpoint mav_console_ingress]
-Mode=Server
-Address=127.0.0.1
-Port=14652
+Port=15651
 
 [UdpEndpoint scan_ingress]
 Mode=Server
 Address=127.0.0.1
-Port=14653
-
-[UdpEndpoint tools_ingress]
-Mode=Server
-Address=127.0.0.1
-Port=14660
+Port=15641

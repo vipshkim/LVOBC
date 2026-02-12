@@ -20,10 +20,8 @@
 
 #define MAV_SYSTEM_PORTS_ENV_PATH "/etc/rocket-mav/ports.env"
 #define MAV_SYSTEM_RATE_ENV_PATH "/etc/rocket-mav/rate.env"
-#define MAV_SYSTEM_SERVO_ENV_PATH "/etc/rocket-mav/servo.env"
 #define MAV_USER_PORTS_ENV_REL ".config/rocket-mav/ports.env"
 #define MAV_USER_RATE_ENV_REL ".config/rocket-mav/rate.env"
-#define MAV_USER_SERVO_ENV_REL ".config/rocket-mav/servo.env"
 
 #define MAV_CFG_MAX_ENTRIES 256
 #define MAV_CFG_KEY_LEN 64
@@ -55,9 +53,6 @@
 #define MAV_CFG_KEY_TOOLS_SERIAL_BAUD "ROCKET_MAV_TOOLS_SERIAL_BAUD"
 #define MAV_CFG_KEY_SERVO_LOOP_HZ "ROCKET_MAV_SERVO_LOOP_HZ"
 #define MAV_CFG_KEY_MOTOR_LOOP_HZ "ROCKET_MAV_MOTOR_LOOP_HZ"
-#define MAV_CFG_KEY_SERVO_TEST_STREAM_MAP "ROCKET_MAV_SERVO_TEST_STREAM_MAP"
-#define MAV_CFG_KEY_SERVO_TEST_DIRECT_ACT_TEST "ROCKET_MAV_SERVO_TEST_DIRECT_ACTUATOR_TEST"
-#define MAV_CFG_KEY_SERVO_TEST_ACT_TIMEOUT_SEC "ROCKET_MAV_SERVO_TEST_ACT_TIMEOUT_SEC"
 
 #define MAV_CFG_KEY_STREAM_ODOM_LISTEN_IP "ROCKET_MAV_STREAM_ODOM_LISTEN_IP"
 #define MAV_CFG_KEY_STREAM_ODOM_LISTEN_PORT "ROCKET_MAV_STREAM_ODOM_LISTEN_PORT"
@@ -70,25 +65,11 @@
 #define MAV_CFG_KEY_STREAM_CMD_LISTEN_PORT "ROCKET_MAV_STREAM_CMD_LISTEN_PORT"
 #define MAV_CFG_KEY_STREAM_CMD_TARGET_IP "ROCKET_MAV_STREAM_CMD_TARGET_IP"
 #define MAV_CFG_KEY_STREAM_CMD_TARGET_PORT "ROCKET_MAV_STREAM_CMD_TARGET_PORT"
-#define MAV_CFG_KEY_STREAM_CMD_FEEDBACK_IP "ROCKET_MAV_STREAM_CMD_FEEDBACK_IP"
-#define MAV_CFG_KEY_STREAM_CMD_FEEDBACK_PORT "ROCKET_MAV_STREAM_CMD_FEEDBACK_PORT"
 #define MAV_CFG_KEY_STREAM_CMD_RATE_HZ "ROCKET_MAV_STREAM_CMD_RATE_HZ"
-#define MAV_CFG_KEY_STREAM_CMD_IDLE_RATE_HZ "ROCKET_MAV_STREAM_CMD_IDLE_RATE_HZ"
-#define MAV_CFG_KEY_STREAM_CMD_ACTIVE_RATE_HZ "ROCKET_MAV_STREAM_CMD_ACTIVE_RATE_HZ"
-#define MAV_CFG_KEY_STREAM_CMD_ACTIVE_HOLD_SEC "ROCKET_MAV_STREAM_CMD_ACTIVE_HOLD_SEC"
-#define MAV_CFG_KEY_STREAM_CMD_MANUAL_KEEPALIVE_HZ "ROCKET_MAV_STREAM_CMD_MANUAL_KEEPALIVE_HZ"
-#define MAV_CFG_KEY_STREAM_CMD_RX_BURST_MAX "ROCKET_MAV_STREAM_CMD_RX_BURST_MAX"
-#define MAV_CFG_KEY_STREAM_CMD_RX_PARSE_HZ "ROCKET_MAV_STREAM_CMD_RX_PARSE_HZ"
 #define MAV_CFG_KEY_STREAM_CMD_STATE_PATH "ROCKET_MAV_STREAM_CMD_STATE_PATH"
 #define MAV_CFG_KEY_STREAM_CMD_TEST_LISTEN_IP "ROCKET_MAV_STREAM_CMD_TEST_LISTEN_IP"
 #define MAV_CFG_KEY_STREAM_CMD_TEST_LISTEN_PORT "ROCKET_MAV_STREAM_CMD_TEST_LISTEN_PORT"
 #define MAV_CFG_KEY_STREAM_CMD_TEST_CONSOLE_BPS "ROCKET_MAV_STREAM_CMD_TEST_CONSOLE_BPS"
-#define MAV_CFG_KEY_STREAM_CMD_OUTPUT_MODE "ROCKET_MAV_STREAM_CMD_OUTPUT_MODE"
-#define MAV_CFG_KEY_STREAM_CMD_RC_BASE_CH "ROCKET_MAV_STREAM_CMD_RC_BASE_CH"
-#define MAV_CFG_KEY_STREAM_CMD_RC_CHAN_COUNT "ROCKET_MAV_STREAM_CMD_RC_CHAN_COUNT"
-#define MAV_CFG_KEY_STREAM_CMD_SEND_RC_CHANNELS "ROCKET_MAV_STREAM_CMD_SEND_RC_CHANNELS"
-#define MAV_CFG_KEY_STREAM_CMD_ACT_TEST_FUNC_MAP "ROCKET_MAV_STREAM_CMD_ACT_TEST_FUNC_MAP"
-#define MAV_CFG_KEY_STREAM_CMD_ACT_TEST_TIMEOUT_SEC "ROCKET_MAV_STREAM_CMD_ACT_TEST_TIMEOUT_SEC"
 
 #define MAV_CFG_KEY_STREAM_ODOM_TEST_LISTEN_IP "ROCKET_MAV_STREAM_ODOM_TEST_LISTEN_IP"
 #define MAV_CFG_KEY_STREAM_ODOM_TEST_LISTEN_PORT "ROCKET_MAV_STREAM_ODOM_TEST_LISTEN_PORT"
@@ -113,8 +94,6 @@
 
 #define MAV_CFG_KEY_ARM_REASON_LISTEN_IP "ROCKET_MAV_ARM_REASON_LISTEN_IP"
 #define MAV_CFG_KEY_ARM_REASON_LISTEN_PORT "ROCKET_MAV_ARM_REASON_LISTEN_PORT"
-
-#define MAV_CFG_KEY_MODE_STATE_PATH "ROCKET_MAV_MODE_STATE_PATH"
 
 #define MAV_CFG_KEY_PARAMS_TMP_PATH "ROCKET_MAV_PARAMS_TMP_PATH"
 #define MAV_CFG_KEY_PARAMS_PERSIST_PATH "ROCKET_MAV_PARAMS_PERSIST_PATH"
@@ -211,7 +190,6 @@ static inline void mav_cfg_load_once(void) {
 
     mav_cfg_load_file(MAV_SYSTEM_PORTS_ENV_PATH, state->sys_table, &state->sys_count);
     mav_cfg_load_file(MAV_SYSTEM_RATE_ENV_PATH, state->sys_table, &state->sys_count);
-    mav_cfg_load_file(MAV_SYSTEM_SERVO_ENV_PATH, state->sys_table, &state->sys_count);
 
     const char *home = getenv("HOME");
     if (home && home[0]) {
@@ -219,8 +197,6 @@ static inline void mav_cfg_load_once(void) {
         snprintf(user_path, sizeof(user_path), "%s/%s", home, MAV_USER_PORTS_ENV_REL);
         mav_cfg_load_file(user_path, state->user_table, &state->user_count);
         snprintf(user_path, sizeof(user_path), "%s/%s", home, MAV_USER_RATE_ENV_REL);
-        mav_cfg_load_file(user_path, state->user_table, &state->user_count);
-        snprintf(user_path, sizeof(user_path), "%s/%s", home, MAV_USER_SERVO_ENV_REL);
         mav_cfg_load_file(user_path, state->user_table, &state->user_count);
     }
 }
@@ -271,58 +247,6 @@ static inline const char *mav_select_params_path(void) {
     if (tmp_path && access(tmp_path, R_OK) == 0) return tmp_path;
     if (persist_path && access(persist_path, R_OK) == 0) return persist_path;
     return NULL;
-}
-
-enum {
-    MAV_MODE_STATE_NORMAL = 0,
-    MAV_MODE_STATE_TEST = 1,
-    MAV_MODE_STATE_LAUNCH = 2
-};
-
-static inline void mav_mode_state_path(char *out, size_t out_len) {
-    const char *cfg = mav_cfg_get_str(MAV_CFG_KEY_MODE_STATE_PATH, NULL);
-    if (cfg && cfg[0] != '\0') {
-        snprintf(out, out_len, "%s", cfg);
-        return;
-    }
-    const char *home = getenv("HOME");
-    if (home && home[0] != '\0') {
-        snprintf(out, out_len, "%s/.config/rocket-mav/mode.env", home);
-        return;
-    }
-    snprintf(out, out_len, "/tmp/rocket-mav-mode.env");
-}
-
-static inline int mav_read_mode_state_from_path(const char *path) {
-    FILE *fp = fopen(path, "r");
-    if (!fp) return MAV_MODE_STATE_NORMAL;
-
-    char line[256];
-    int state = MAV_MODE_STATE_NORMAL;
-    while (fgets(line, sizeof(line), fp)) {
-        mav_cfg_trim(line);
-        if (line[0] == '\0' || line[0] == '#') continue;
-        char *eq = strchr(line, '=');
-        if (!eq) continue;
-        *eq = '\0';
-        char *key = line;
-        char *val = eq + 1;
-        mav_cfg_trim(key);
-        mav_cfg_trim(val);
-        if (strcmp(key, "MODE") != 0) continue;
-        if (strcmp(val, "TEST") == 0) state = MAV_MODE_STATE_TEST;
-        else if (strcmp(val, "LAUNCH") == 0) state = MAV_MODE_STATE_LAUNCH;
-        else state = MAV_MODE_STATE_NORMAL;
-        break;
-    }
-    fclose(fp);
-    return state;
-}
-
-static inline int mav_read_mode_state(void) {
-    char path[PATH_MAX];
-    mav_mode_state_path(path, sizeof(path));
-    return mav_read_mode_state_from_path(path);
 }
 
 #endif

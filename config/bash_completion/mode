@@ -1,0 +1,31 @@
+_rocket_mav_mode_complete()
+{
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # First argument: subcommand
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "normal test launch" -- "${cur}") )
+        return 0
+    fi
+
+    # Option value completion
+    case "${prev}" in
+        -f)
+            COMPREPLY=( $(compgen -f -- "${cur}") )
+            return 0
+            ;;
+        -u)
+            COMPREPLY=( $(compgen -A hostname -- "${cur}") )
+            return 0
+            ;;
+    esac
+
+    COMPREPLY=( $(compgen -W "-f -u -p -t -k -s -c -d -r" -- "${cur}") )
+    return 0
+}
+
+complete -o bashdefault -o default -F _rocket_mav_mode_complete mode
+complete -o bashdefault -o default -F _rocket_mav_mode_complete Tools/mode
+complete -o bashdefault -o default -F _rocket_mav_mode_complete "$HOME/Tools/mode"

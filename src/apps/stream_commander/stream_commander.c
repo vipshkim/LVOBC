@@ -1,16 +1,10 @@
 #define _DEFAULT_SOURCE 1
 
-#ifndef MAVLINK_USE_MESSAGE_INFO
-#define MAVLINK_USE_MESSAGE_INFO 1
-#endif
-
 #include <arpa/inet.h>
 #include <errno.h>
-#include <limits.h>
 #include <math.h>
 #include <netinet/in.h>
 #include <signal.h>
-#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,94 +15,59 @@
 #include <unistd.h>
 
 #include <mavlink.h>
+
+#include "rocket_common.h"
 #include "rocket_mav_common.h"
 
 #define DEFAULT_LISTEN_IP "127.0.0.1"
-#define DEFAULT_LISTEN_PORT 14654
-#define DEFAULT_MAV_IP MAV_DEFAULT_IP
-#define DEFAULT_MAV_PORT MAV_DEFAULT_PORT
-#define DEFAULT_RATE_HZ 100.0
-#define DEFAULT_IDLE_RATE_HZ 20.0
-#define DEFAULT_ACTIVE_RATE_HZ 200.0
-#define DEFAULT_ACTIVE_HOLD_SEC 0.5
-#define DEFAULT_MANUAL_KEEPALIVE_HZ 5.0
-#define DEFAULT_RX_BURST_MAX 32
-#define DEFAULT_RX_PARSE_HZ 200.0
-#define DEFAULT_INPUT_TIMEOUT_SEC 1.0
+#define DEFAULT_LISTEN_PORT 14531
+#define DEFAULT_TARGET_IP MAV_DEFAULT_IP
+#define DEFAULT_TARGET_PORT 14631
 #define DEFAULT_STATE_PATH "/tmp/stream_commander.latest"
+#define DEFAULT_MANUAL_KEEPALIVE_HZ 10.0
 
 #define START_TOKEN ((uint8_t)'$')
 #define END_TOKEN ((uint8_t)'\n')
-#define COMMAND_FLOAT_COUNT 8
-#define COMMAND_PACKET_SIZE (1 + 1 + COMMAND_FLOAT_COUNT * (int)sizeof(float) + 1)
-#define STATE_MAGIC "RSCM"
-#define STATE_VERSION 1
-#define PX4_CUSTOM_MAIN_MODE_MANUAL 1
 
-static volatile sig_atomic_t g_running = 1;
+#define MAX_RC_CHANNELS 18
+#define MAX_ACTUATOR_CHANNELS 12
+
+#define STATE_MAGIC "RSCM"
+#define STATE_VERSION 2
+#define STATE_ACT_COUNT 8
+#define STATE_MAX_RC_COUNT 16
+
+typedef struct {
+    int16_t x, y, z, r;
+    uint16_t buttons;
+    uint16_t buttons2;
+    uint8_t enabled_extensions;
+    int16_t s, t;
+    int16_t aux1, aux2, aux3, aux4, aux5, aux6;
+} manual_state_t;
 
 typedef struct {
     uint8_t arm;
-    float actuator[COMMAND_FLOAT_COUNT];
-    int valid;
-} command_state_t;
+    uint8_t rc_count;
+    uint16_t rc[MAX_RC_CHANNELS];
+    uint8_t act_count;
+    float act[MAX_ACTUATOR_CHANNELS];
 
-typedef struct {
-    int valid;
-    uint8_t base_mode;
-    uint8_t main_mode;
-    uint8_t sub_mode;
-} flight_mode_snapshot_t;
+    uint8_t manual_level; /* 0..15 */
+    manual_state_t manual;
+} command_packet_t;
+
+static volatile sig_atomic_t g_running = 1;
 
 static void handle_signal(int signo) {
     (void)signo;
     g_running = 0;
 }
 
-static double monotonic_seconds(void) {
+static double mono_now_sec(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
-}
-
-static void usage(const char *prog) {
-    fprintf(stderr,
-        "Usage: %s [options]\n"
-        "Options:\n"
-        "  -l <ip>        Command input listen IP (default %s)\n"
-        "  -q <port>      Command input listen port (default %d)\n"
-        "  -u <ip>        MAVLink target IP (default %s)\n"
-        "  -p <port>      MAVLink target port (default %d)\n"
-        "  -r <hz>        Control output rate in Hz (default %.1f)\n"
-        "  -i <hz>        Idle actuator TX rate in Hz (default %.1f)\n"
-        "  -a <hz>        Active actuator TX rate cap in Hz (default %.1f)\n"
-        "  -b <sec>       Active boost hold time after cmd packet (default %.1f)\n"
-        "  -m <hz>        MANUAL_CONTROL keepalive rate in Hz (default %.1f)\n"
-        "  -x <count>     Max RX packets handled per loop (default %d)\n"
-        "  -y <hz>        Max RX parse cadence in Hz (default %.1f, max 200)\n"
-        "  -s <sysid>     Sender system id (default %d)\n"
-        "  -c <compid>    Sender component id (default %d)\n"
-        "  -t <target>    Target system id (default %d)\n"
-        "  -k <target>    Target component id (default %d)\n"
-        "  -f <path>      /tmp state file path (default %s)\n"
-        "  -h             Show this help\n",
-        prog,
-        DEFAULT_LISTEN_IP,
-        DEFAULT_LISTEN_PORT,
-        DEFAULT_MAV_IP,
-        DEFAULT_MAV_PORT,
-        DEFAULT_RATE_HZ,
-        DEFAULT_IDLE_RATE_HZ,
-        DEFAULT_ACTIVE_RATE_HZ,
-        DEFAULT_ACTIVE_HOLD_SEC,
-        DEFAULT_MANUAL_KEEPALIVE_HZ,
-        DEFAULT_RX_BURST_MAX,
-        DEFAULT_RX_PARSE_HZ,
-        MAV_DEFAULT_SYSID,
-        MAV_DEFAULT_COMPID,
-        MAV_DEFAULT_TARGET_SYS,
-        MAV_DEFAULT_TARGET_COMP,
-        DEFAULT_STATE_PATH);
 }
 
 static int setup_udp_listener(const char *ip, int port) {
@@ -126,12 +85,10 @@ static int setup_udp_listener(const char *ip, int port) {
         close(fd);
         return -1;
     }
-
     if (bind(fd, (const struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(fd);
         return -1;
     }
-
     return fd;
 }
 
@@ -146,40 +103,122 @@ static int setup_udp_sender(struct sockaddr_in *dest, const char *ip, int port) 
         close(fd);
         return -1;
     }
-
     return fd;
 }
 
-static float clamp_unit(float v) {
-    if (v > 1.0f) return 1.0f;
-    if (v < -1.0f) return -1.0f;
-    return v;
+static uint16_t read_u16_le(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
-static float clamp_range(float v, float lo, float hi) {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
+static int16_t read_i16_le(const uint8_t *p) {
+    return (int16_t)read_u16_le(p);
 }
 
-static float normalize_input_value(size_t idx, float raw, int use_legacy_01000) {
-    if (!use_legacy_01000) {
-        return clamp_unit(raw);
+static uint32_t read_u32_le(const uint8_t *p) {
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
+static float read_f32_le(const uint8_t *p) {
+    union {
+        uint32_t u;
+        float f;
+    } cvt;
+    cvt.u = read_u32_le(p);
+    return cvt.f;
+}
+
+static void write_u16_le(FILE *fp, uint16_t v) {
+    uint8_t b[2];
+    b[0] = (uint8_t)(v & 0xFFu);
+    b[1] = (uint8_t)((v >> 8) & 0xFFu);
+    fwrite(b, 1, sizeof(b), fp);
+}
+
+static void write_u32_le(FILE *fp, uint32_t v) {
+    uint8_t b[4];
+    b[0] = (uint8_t)(v & 0xFFu);
+    b[1] = (uint8_t)((v >> 8) & 0xFFu);
+    b[2] = (uint8_t)((v >> 16) & 0xFFu);
+    b[3] = (uint8_t)((v >> 24) & 0xFFu);
+    fwrite(b, 1, sizeof(b), fp);
+}
+
+static int parse_command_packet(const uint8_t *buf, size_t len, command_packet_t *out) {
+    if (!buf || !out) return 0;
+    if (len < 5) return 0;
+    if (buf[0] != START_TOKEN || buf[len - 1] != END_TOKEN) return 0;
+
+    memset(out, 0, sizeof(*out));
+    out->manual.x = 0;
+    out->manual.y = 0;
+    out->manual.z = 0;
+    out->manual.r = 0;
+
+    size_t off = 1;
+    out->arm = buf[off++] ? 1u : 0u;
+
+    if (off >= len) return 0;
+    uint8_t rc_count_raw = buf[off++];
+    out->rc_count = (rc_count_raw > MAX_RC_CHANNELS) ? MAX_RC_CHANNELS : rc_count_raw;
+    for (uint8_t i = 0; i < rc_count_raw; ++i) {
+        if (off + 2 > len) return 0;
+        uint16_t v = read_u16_le(buf + off);
+        if (i < out->rc_count) out->rc[i] = v;
+        off += 2;
     }
-    if (idx < 4) {
-        // motor 1..4: legacy 0..1000 -> 0..1
-        return clamp_range(raw / 1000.0f, 0.0f, 1.0f);
+
+    if (off >= len) return 0;
+    uint8_t act_count_raw = buf[off++];
+    out->act_count = (act_count_raw > MAX_ACTUATOR_CHANNELS) ? MAX_ACTUATOR_CHANNELS : act_count_raw;
+    for (uint8_t i = 0; i < act_count_raw; ++i) {
+        if (off + 4 > len) return 0;
+        float v = read_f32_le(buf + off);
+        if (i < out->act_count) out->act[i] = v;
+        off += 4;
     }
-    // servo 5..8: legacy 0..1000 (500 neutral) -> -1..1
-    return clamp_unit((raw - 500.0f) / 500.0f);
+
+    /* backward compatibility: old format ends here with '\n' */
+    if (off + 1 == len && buf[off] == END_TOKEN) {
+        out->manual_level = 0;
+        return 1;
+    }
+
+    if (off >= len) return 0;
+    out->manual_level = buf[off++];
+    if (out->manual_level > 15) return 0;
+
+    if (out->manual_level >= 1) { if (off + 2 > len) return 0; out->manual.x = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 2) { if (off + 2 > len) return 0; out->manual.y = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 3) { if (off + 2 > len) return 0; out->manual.z = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 4) { if (off + 2 > len) return 0; out->manual.r = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 5) { if (off + 2 > len) return 0; out->manual.buttons = read_u16_le(buf + off); off += 2; }
+    if (out->manual_level >= 6) { if (off + 2 > len) return 0; out->manual.buttons2 = read_u16_le(buf + off); off += 2; }
+    if (out->manual_level >= 7) { if (off + 1 > len) return 0; out->manual.enabled_extensions = buf[off++]; }
+    if (out->manual_level >= 8) { if (off + 2 > len) return 0; out->manual.s = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 9) { if (off + 2 > len) return 0; out->manual.t = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 10){ if (off + 2 > len) return 0; out->manual.aux1 = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 11){ if (off + 2 > len) return 0; out->manual.aux2 = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 12){ if (off + 2 > len) return 0; out->manual.aux3 = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 13){ if (off + 2 > len) return 0; out->manual.aux4 = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 14){ if (off + 2 > len) return 0; out->manual.aux5 = read_i16_le(buf + off); off += 2; }
+    if (out->manual_level >= 15){ if (off + 2 > len) return 0; out->manual.aux6 = read_i16_le(buf + off); off += 2; }
+
+    return (off + 1 == len && buf[off] == END_TOKEN);
 }
 
-static void send_arm_disarm(int sock, const struct sockaddr_in *dest,
-                            int sysid, int compid, int target_sys, int target_comp,
-                            int arm, int force) {
-    mavlink_message_t msg;
+static void send_mavlink_packet(int sock, const struct sockaddr_in *dest, const mavlink_message_t *msg) {
     uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+    uint16_t len = mavlink_msg_to_send_buffer(buf, msg);
+    sendto(sock, buf, len, 0, (const struct sockaddr *)dest, sizeof(*dest));
+}
 
+static void send_arm_command(int tx_fd, const struct sockaddr_in *dest,
+                             int sysid, int compid, int target_sys, int target_comp,
+                             uint8_t arm) {
+    mavlink_message_t msg;
     mavlink_msg_command_long_pack(
         (uint8_t)sysid,
         (uint8_t)compid,
@@ -189,197 +228,60 @@ static void send_arm_disarm(int sock, const struct sockaddr_in *dest,
         MAV_CMD_COMPONENT_ARM_DISARM,
         0,
         arm ? 1.0f : 0.0f,
-        force ? 21196.0f : 0.0f,
+        0.0f,
         0.0f,
         0.0f,
         0.0f,
         0.0f,
         0.0f);
-
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    sendto(sock, buf, len, 0, (const struct sockaddr *)dest, sizeof(*dest));
+    send_mavlink_packet(tx_fd, dest, &msg);
 }
 
-static void custom_mode_to_main_sub(uint32_t custom_mode, uint8_t *main_mode, uint8_t *sub_mode) {
-    if (main_mode) *main_mode = (uint8_t)((custom_mode >> 16) & 0xFFu);
-    if (sub_mode) *sub_mode = (uint8_t)((custom_mode >> 24) & 0xFFu);
-}
-
-static void send_set_mode(int sock, const struct sockaddr_in *dest,
-                          int sysid, int compid, int target_sys, int target_comp,
-                          uint8_t base_mode, uint8_t main_mode, uint8_t sub_mode) {
+static void send_manual_control(int tx_fd, const struct sockaddr_in *dest,
+                                int sysid, int compid, int target_sys,
+                                const manual_state_t *m) {
     mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-    uint8_t use_base = (uint8_t)(base_mode | MAV_MODE_FLAG_CUSTOM_MODE_ENABLED);
-
-    mavlink_msg_command_long_pack(
-        (uint8_t)sysid,
-        (uint8_t)compid,
-        &msg,
-        (uint8_t)target_sys,
-        (uint8_t)target_comp,
-        MAV_CMD_DO_SET_MODE,
-        0,
-        (float)use_base,
-        (float)main_mode,
-        (float)sub_mode,
-        0.f, 0.f, 0.f, 0.f);
-
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    sendto(sock, buf, len, 0, (const struct sockaddr *)dest, sizeof(*dest));
-}
-
-static void send_manual_control_keepalive(int sock, const struct sockaddr_in *dest,
-                                          int sysid, int compid, int target_sys) {
-    mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-
-    // Keep throttle at minimum for arming safety gate (PX4 rejects high throttle).
     mavlink_msg_manual_control_pack(
         (uint8_t)sysid,
         (uint8_t)compid,
         &msg,
         (uint8_t)target_sys,
-        0, 0, 0, 0,
-        0,    // buttons
-        0,    // buttons2
-        0,    // enabled_extensions
-        0, 0, 0, 0, 0, 0, 0, 0);
-
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    sendto(sock, buf, len, 0, (const struct sockaddr *)dest, sizeof(*dest));
+        m->x, m->y, m->z, m->r,
+        m->buttons,
+        m->buttons2,
+        m->enabled_extensions,
+        m->s, m->t,
+        m->aux1, m->aux2, m->aux3, m->aux4, m->aux5, m->aux6);
+    send_mavlink_packet(tx_fd, dest, &msg);
 }
 
-static void send_prearm_low_throttle(int sock, const struct sockaddr_in *dest,
-                                     int sysid, int compid, int target_sys) {
-    /* Push a short burst of low-throttle manual control before ARM command. */
-    for (int i = 0; i < 5; ++i) {
-        send_manual_control_keepalive(sock, dest, sysid, compid, target_sys);
-        usleep(20000);
-    }
-}
+static void send_rc_channels_override(int tx_fd, const struct sockaddr_in *dest,
+                                      int sysid, int compid, int target_sys, int target_comp,
+                                      const command_packet_t *pkt) {
+    if (!pkt || pkt->rc_count == 0) return;
 
-static void request_message(int sock, const struct sockaddr_in *dest,
-                            int sysid, int compid, int target_sys, int target_comp,
-                            uint32_t message_id) {
+    uint16_t raw[18];
+    for (int i = 0; i < 18; ++i) raw[i] = UINT16_MAX;
+    for (uint8_t i = 0; i < pkt->rc_count && i < 18; ++i) raw[i] = pkt->rc[i];
+
     mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-    mavlink_msg_command_long_pack(
+    mavlink_msg_rc_channels_override_pack(
         (uint8_t)sysid,
         (uint8_t)compid,
         &msg,
         (uint8_t)target_sys,
         (uint8_t)target_comp,
-        MAV_CMD_REQUEST_MESSAGE,
-        0,
-        (float)message_id,
-        0.f, 0.f, 0.f, 0.f, 0.f, 0.f);
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    sendto(sock, buf, len, 0, (const struct sockaddr *)dest, sizeof(*dest));
+        raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+        raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15],
+        raw[16], raw[17]);
+    send_mavlink_packet(tx_fd, dest, &msg);
 }
 
-static void process_rx_message(const mavlink_message_t *msg,
-                               int target_sys, int target_comp,
-                               flight_mode_snapshot_t *mode_hint) {
-    if (msg->msgid == MAVLINK_MSG_ID_HEARTBEAT) {
-        if (msg->sysid != (uint8_t)target_sys) return;
-        if (target_comp > 0 && msg->compid != (uint8_t)target_comp) return;
-        mavlink_heartbeat_t hb;
-        mavlink_msg_heartbeat_decode(msg, &hb);
-        if (mode_hint) {
-            mode_hint->valid = 1;
-            mode_hint->base_mode = hb.base_mode;
-            custom_mode_to_main_sub(hb.custom_mode, &mode_hint->main_mode, &mode_hint->sub_mode);
-        }
-    }
-}
-
-static int wait_for_target_heartbeat(int fd, int target_sys, int target_comp,
-                                     double timeout_sec, flight_mode_snapshot_t *out_mode) {
-    double deadline = monotonic_seconds() + timeout_sec;
+static void send_do_set_actuator_group(int tx_fd, const struct sockaddr_in *dest,
+                                       int sysid, int compid, int target_sys, int target_comp,
+                                       int set_index,
+                                       float p1, float p2, float p3, float p4, float p5, float p6) {
     mavlink_message_t msg;
-    mavlink_status_t status;
-    memset(&status, 0, sizeof(status));
-    while (monotonic_seconds() < deadline) {
-        double remaining = deadline - monotonic_seconds();
-        if (remaining < 0) remaining = 0;
-
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        struct timeval tv;
-        tv.tv_sec = (time_t)remaining;
-        tv.tv_usec = (suseconds_t)((remaining - tv.tv_sec) * 1e6);
-        int ready = select(fd + 1, &rfds, NULL, NULL, &tv);
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            return 0;
-        }
-        if (ready == 0) continue;
-
-        uint8_t buf[2048];
-        ssize_t n = recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
-        if (n <= 0) continue;
-
-        for (ssize_t i = 0; i < n; ++i) {
-            if (!mavlink_parse_char(MAVLINK_COMM_0, buf[i], &msg, &status)) continue;
-            process_rx_message(&msg, target_sys, target_comp, out_mode);
-            if (out_mode && out_mode->valid) return 1;
-        }
-    }
-    return 0;
-}
-
-static int wait_for_command_ack(int fd, uint16_t command, double timeout_sec, uint8_t *out_result) {
-    double deadline = monotonic_seconds() + timeout_sec;
-    mavlink_message_t msg;
-    mavlink_status_t status;
-    memset(&status, 0, sizeof(status));
-
-    while (monotonic_seconds() < deadline) {
-        double remaining = deadline - monotonic_seconds();
-        if (remaining < 0) remaining = 0;
-
-        fd_set rfds;
-        FD_ZERO(&rfds);
-        FD_SET(fd, &rfds);
-        struct timeval tv;
-        tv.tv_sec = (time_t)remaining;
-        tv.tv_usec = (suseconds_t)((remaining - tv.tv_sec) * 1e6);
-        int ready = select(fd + 1, &rfds, NULL, NULL, &tv);
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            return 0;
-        }
-        if (ready == 0) continue;
-
-        uint8_t buf[2048];
-        ssize_t n = recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL);
-        if (n <= 0) continue;
-
-        for (ssize_t i = 0; i < n; ++i) {
-            if (!mavlink_parse_char(MAVLINK_COMM_0, buf[i], &msg, &status)) continue;
-            if (msg.msgid != MAVLINK_MSG_ID_COMMAND_ACK) {
-                continue;
-            }
-            mavlink_command_ack_t ack;
-            mavlink_msg_command_ack_decode(&msg, &ack);
-            if (ack.command != command) continue;
-            if (out_result) *out_result = ack.result;
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-static void send_set_actuator_group(int sock, const struct sockaddr_in *dest,
-                                    int sysid, int compid, int target_sys, int target_comp,
-                                    int set_index,
-                                    float p1, float p2, float p3, float p4, float p5, float p6) {
-    mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-
     mavlink_msg_command_long_pack(
         (uint8_t)sysid,
         (uint8_t)compid,
@@ -390,186 +292,111 @@ static void send_set_actuator_group(int sock, const struct sockaddr_in *dest,
         0,
         p1, p2, p3, p4, p5, p6,
         (float)set_index);
-
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    sendto(sock, buf, len, 0, (const struct sockaddr *)dest, sizeof(*dest));
+    send_mavlink_packet(tx_fd, dest, &msg);
 }
 
-static void send_actuators(int sock, const struct sockaddr_in *dest,
-                           int sysid, int compid, int target_sys, int target_comp,
-                           const command_state_t *st) {
-    // Set 0 controls actuator 1..6, set 1 controls actuator 7..12.
-    send_set_actuator_group(sock, dest, sysid, compid, target_sys, target_comp,
-                            0,
-                            clamp_unit(st->actuator[0]),
-                            clamp_unit(st->actuator[1]),
-                            clamp_unit(st->actuator[2]),
-                            clamp_unit(st->actuator[3]),
-                            clamp_unit(st->actuator[4]),
-                            clamp_unit(st->actuator[5]));
+static void send_do_set_actuator(int tx_fd, const struct sockaddr_in *dest,
+                                 int sysid, int compid, int target_sys, int target_comp,
+                                 const command_packet_t *pkt) {
+    if (!pkt || pkt->act_count == 0) return;
 
-    send_set_actuator_group(sock, dest, sysid, compid, target_sys, target_comp,
-                            1,
-                            clamp_unit(st->actuator[6]),
-                            clamp_unit(st->actuator[7]),
-                            NAN, NAN, NAN, NAN);
-}
+    float s0[6] = {NAN, NAN, NAN, NAN, NAN, NAN};
+    float s1[6] = {NAN, NAN, NAN, NAN, NAN, NAN};
 
-static int parse_command_packet(const uint8_t *buf, size_t n, command_state_t *st) {
-    if (n != COMMAND_PACKET_SIZE) return 0;
-    if (buf[0] != START_TOKEN) return 0;
-    if (buf[COMMAND_PACKET_SIZE - 1] != END_TOKEN) return 0;
+    uint8_t c0 = (pkt->act_count > 6) ? 6 : pkt->act_count;
+    for (uint8_t i = 0; i < c0; ++i) s0[i] = pkt->act[i];
 
-    st->arm = buf[1] ? 1 : 0;
+    send_do_set_actuator_group(tx_fd, dest, sysid, compid, target_sys, target_comp,
+                               0, s0[0], s0[1], s0[2], s0[3], s0[4], s0[5]);
 
-    float raw_vals[COMMAND_FLOAT_COUNT];
-    int use_legacy_01000 = 0;
-    size_t off = 2;
-    for (size_t i = 0; i < COMMAND_FLOAT_COUNT; ++i) {
-        float v = 0.0f;
-        memcpy(&v, buf + off, sizeof(float));
-        raw_vals[i] = v;
-        if (fabsf(v) > 1.2f) {
-            use_legacy_01000 = 1;
-        }
-        off += sizeof(float);
+    if (pkt->act_count >= 7) {
+        uint8_t c1 = pkt->act_count - 6;
+        if (c1 > 6) c1 = 6;
+        for (uint8_t i = 0; i < c1; ++i) s1[i] = pkt->act[i + 6];
+
+        send_do_set_actuator_group(tx_fd, dest, sysid, compid, target_sys, target_comp,
+                                   1, s1[0], s1[1], s1[2], s1[3], s1[4], s1[5]);
     }
-    for (size_t i = 0; i < COMMAND_FLOAT_COUNT; ++i) {
-        st->actuator[i] = normalize_input_value(i, raw_vals[i], use_legacy_01000);
-    }
-
-    st->valid = 1;
-    return 1;
 }
 
-static void put_le16(uint8_t *dst, uint16_t v) {
-    dst[0] = (uint8_t)(v & 0xFFu);
-    dst[1] = (uint8_t)((v >> 8) & 0xFFu);
-}
+static void save_state_file(const char *path, const command_packet_t *pkt) {
+    if (!path || !path[0] || !pkt) return;
 
-static void put_le32(uint8_t *dst, uint32_t v) {
-    dst[0] = (uint8_t)(v & 0xFFu);
-    dst[1] = (uint8_t)((v >> 8) & 0xFFu);
-    dst[2] = (uint8_t)((v >> 16) & 0xFFu);
-    dst[3] = (uint8_t)((v >> 24) & 0xFFu);
-}
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return;
 
-static void save_state_file(const char *path, const command_state_t *st) {
-    if (!path || !path[0] || !st) return;
+    fwrite(STATE_MAGIC, 1, 4, fp);
+    fputc(STATE_VERSION, fp);
+    fputc(pkt->arm ? 1 : 0, fp);
+    write_u16_le(fp, (uint16_t)STATE_ACT_COUNT);
 
-    char tmp_path[PATH_MAX];
-    int n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-    if (n <= 0 || (size_t)n >= sizeof(tmp_path)) return;
-
-    uint8_t blob[4 + 1 + 1 + 2 + COMMAND_FLOAT_COUNT * 4];
-    size_t off = 0;
-    memcpy(blob + off, STATE_MAGIC, 4);
-    off += 4;
-    blob[off++] = STATE_VERSION;
-    blob[off++] = st->arm ? 1u : 0u;
-    put_le16(blob + off, (uint16_t)COMMAND_FLOAT_COUNT);
-    off += 2;
-    for (size_t i = 0; i < COMMAND_FLOAT_COUNT; ++i) {
+    for (int i = 0; i < STATE_ACT_COUNT; ++i) {
         union {
             float f;
             uint32_t u;
         } cvt;
-        cvt.f = st->actuator[i];
-        put_le32(blob + off, cvt.u);
-        off += 4;
+        cvt.f = (i < pkt->act_count) ? pkt->act[i] : 0.0f;
+        write_u32_le(fp, cvt.u);
     }
 
-    FILE *fp = fopen(tmp_path, "wb");
-    if (!fp) return;
+    uint8_t rc_n = pkt->rc_count;
+    if (rc_n > STATE_MAX_RC_COUNT) rc_n = STATE_MAX_RC_COUNT;
+    fputc(rc_n, fp);
+    for (uint8_t i = 0; i < rc_n; ++i) {
+        union {
+            float f;
+            uint32_t u;
+        } cvt;
+        cvt.f = (float)pkt->rc[i];
+        write_u32_le(fp, cvt.u);
+    }
 
-    if (fwrite(blob, 1, off, fp) != off) {
-        fclose(fp);
-        unlink(tmp_path);
-        return;
-    }
-    if (fflush(fp) != 0) {
-        fclose(fp);
-        unlink(tmp_path);
-        return;
-    }
-    int fd = fileno(fp);
-    if (fd >= 0) {
-        (void)fsync(fd);
-    }
-    if (fclose(fp) != 0) {
-        unlink(tmp_path);
-        return;
-    }
-    if (rename(tmp_path, path) != 0) {
-        unlink(tmp_path);
-    }
+    fclose(fp);
+}
+
+static void usage(const char *prog) {
+    fprintf(stderr,
+            "Usage: %s [options]\n"
+            "Options:\n"
+            "  -l <ip>    listen ip (default %s)\n"
+            "  -q <port>  listen port (default %d)\n"
+            "  -u <ip>    target ip (default %s)\n"
+            "  -p <port>  target port (default %d)\n"
+            "  -s <id>    sender sysid\n"
+            "  -c <id>    sender compid\n"
+            "  -t <id>    target sysid\n"
+            "  -k <id>    target compid\n"
+            "  -f <path>  state file path (default %s)\n"
+            "  -h         help\n",
+            prog,
+            DEFAULT_LISTEN_IP, DEFAULT_LISTEN_PORT,
+            DEFAULT_TARGET_IP, DEFAULT_TARGET_PORT,
+            DEFAULT_STATE_PATH);
 }
 
 int main(int argc, char **argv) {
     const char *listen_ip = mav_cfg_get_str(MAV_CFG_KEY_STREAM_CMD_LISTEN_IP, DEFAULT_LISTEN_IP);
     int listen_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_LISTEN_PORT, DEFAULT_LISTEN_PORT);
-    const char *mav_ip = mav_cfg_get_str(
-        MAV_CFG_KEY_STREAM_CMD_TARGET_IP,
-        mav_cfg_get_str(MAV_CFG_KEY_TOOLS_TARGET_IP, DEFAULT_MAV_IP));
-    int mav_port = mav_cfg_get_int(
-        MAV_CFG_KEY_STREAM_CMD_TARGET_PORT,
-        mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_PORT, DEFAULT_MAV_PORT));
-    double configured_rate_hz = mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_RATE_HZ, DEFAULT_RATE_HZ);
-    const char *idle_rate_cfg = mav_cfg_get_str(MAV_CFG_KEY_STREAM_CMD_IDLE_RATE_HZ, NULL);
-    int env_has_idle_rate = (idle_rate_cfg && idle_rate_cfg[0] != '\0');
-    double idle_rate_hz = env_has_idle_rate
-        ? mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_IDLE_RATE_HZ, configured_rate_hz)
-        : configured_rate_hz;
-    double active_rate_hz = mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_ACTIVE_RATE_HZ, DEFAULT_ACTIVE_RATE_HZ);
-    double active_hold_sec = mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_ACTIVE_HOLD_SEC, DEFAULT_ACTIVE_HOLD_SEC);
-    double manual_keepalive_hz = mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_MANUAL_KEEPALIVE_HZ, DEFAULT_MANUAL_KEEPALIVE_HZ);
-    int rx_burst_max = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_RX_BURST_MAX, DEFAULT_RX_BURST_MAX);
-    double rx_parse_hz = mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_RX_PARSE_HZ, DEFAULT_RX_PARSE_HZ);
+    const char *target_ip = mav_cfg_get_str(MAV_CFG_KEY_STREAM_CMD_TARGET_IP, DEFAULT_TARGET_IP);
+    int target_port = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_TARGET_PORT, DEFAULT_TARGET_PORT);
     int sysid = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_SYSID, MAV_DEFAULT_SYSID);
-    int compid = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_COMPID,
-                                 mav_cfg_get_int(MAV_CFG_KEY_TOOLS_COMPID, MAV_DEFAULT_COMPID));
+    int compid = mav_cfg_get_int(MAV_CFG_KEY_STREAM_CMD_COMPID, 192);
     int target_sys = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_SYS, MAV_DEFAULT_TARGET_SYS);
     int target_comp = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_COMP, MAV_DEFAULT_TARGET_COMP);
     const char *state_path = mav_cfg_get_str(MAV_CFG_KEY_STREAM_CMD_STATE_PATH, DEFAULT_STATE_PATH);
+    double manual_keepalive_hz = mav_cfg_get_double(MAV_CFG_KEY_STREAM_CMD_MANUAL_KEEPALIVE_HZ, DEFAULT_MANUAL_KEEPALIVE_HZ);
 
-    int cli_set_idle_rate = 0;
-    int cli_set_rate = 0;
     for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
-            listen_ip = argv[++i];
-        } else if (strcmp(argv[i], "-q") == 0 && i + 1 < argc) {
-            listen_port = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-u") == 0 && i + 1 < argc) {
-            mav_ip = argv[++i];
-        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
-            mav_port = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc) {
-            configured_rate_hz = atof(argv[++i]);
-            cli_set_rate = 1;
-        } else if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
-            idle_rate_hz = atof(argv[++i]);
-            cli_set_idle_rate = 1;
-        } else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
-            active_rate_hz = atof(argv[++i]);
-        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
-            active_hold_sec = atof(argv[++i]);
-        } else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc) {
-            manual_keepalive_hz = atof(argv[++i]);
-        } else if (strcmp(argv[i], "-x") == 0 && i + 1 < argc) {
-            rx_burst_max = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-y") == 0 && i + 1 < argc) {
-            rx_parse_hz = atof(argv[++i]);
-        } else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
-            sysid = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
-            compid = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
-            target_sys = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
-            target_comp = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) {
-            state_path = argv[++i];
-        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+        if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) listen_ip = argv[++i];
+        else if (strcmp(argv[i], "-q") == 0 && i + 1 < argc) listen_port = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-u") == 0 && i + 1 < argc) target_ip = argv[++i];
+        else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) target_port = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) sysid = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) compid = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) target_sys = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) target_comp = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-f") == 0 && i + 1 < argc) state_path = argv[++i];
+        else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             return 0;
         } else {
@@ -578,251 +405,119 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (cli_set_rate && !cli_set_idle_rate && !env_has_idle_rate) {
-        idle_rate_hz = configured_rate_hz;
-    }
+    if (manual_keepalive_hz <= 0.0) manual_keepalive_hz = DEFAULT_MANUAL_KEEPALIVE_HZ;
+    double manual_period = 1.0 / manual_keepalive_hz;
 
-    if (configured_rate_hz <= 0.0 || !isfinite(configured_rate_hz)) {
-        fprintf(stderr, "Invalid -r rate: %f\n", configured_rate_hz);
+    char lock_err[160];
+    int lock_fd = rocket_single_instance_acquire("stream_commander", lock_err, sizeof(lock_err));
+    if (lock_fd < 0) {
+        fprintf(stderr, "stream_commander: %s\n", lock_err[0] ? lock_err : "single-instance lock failed");
         return 1;
     }
-    if (idle_rate_hz <= 0.0 || !isfinite(idle_rate_hz)) {
-        fprintf(stderr, "Invalid idle rate: %f\n", idle_rate_hz);
-        return 1;
-    }
-    if (active_rate_hz <= 0.0 || !isfinite(active_rate_hz)) {
-        fprintf(stderr, "Invalid active rate: %f\n", active_rate_hz);
-        return 1;
-    }
-    if (manual_keepalive_hz <= 0.0 || !isfinite(manual_keepalive_hz)) {
-        fprintf(stderr, "Invalid manual keepalive rate: %f\n", manual_keepalive_hz);
-        return 1;
-    }
-    if (active_hold_sec < 0.0 || !isfinite(active_hold_sec)) {
-        fprintf(stderr, "Invalid active hold sec: %f\n", active_hold_sec);
-        return 1;
-    }
-    if (rx_burst_max < 1) rx_burst_max = 1;
-    if (rx_burst_max > 1024) rx_burst_max = 1024;
-    if (rx_parse_hz <= 0.0 || !isfinite(rx_parse_hz)) {
-        fprintf(stderr, "Invalid RX parse rate: %f\n", rx_parse_hz);
-        return 1;
-    }
-    if (rx_parse_hz > 200.0) rx_parse_hz = 200.0;
-
-    // Keep saturation guard conservative by design.
-    if (active_rate_hz > 200.0) active_rate_hz = 200.0;
-    if (configured_rate_hz > active_rate_hz) configured_rate_hz = active_rate_hz;
-    if (idle_rate_hz > active_rate_hz) idle_rate_hz = active_rate_hz;
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     int rx_fd = setup_udp_listener(listen_ip, listen_port);
     if (rx_fd < 0) {
-        fprintf(stderr, "Failed to bind command listener %s:%d: %s\n", listen_ip, listen_port, strerror(errno));
+        fprintf(stderr, "failed to bind %s:%d: %s\n", listen_ip, listen_port, strerror(errno));
         return 1;
     }
 
-    struct sockaddr_in mav_addr;
-    int tx_fd = setup_udp_sender(&mav_addr, mav_ip, mav_port);
+    struct sockaddr_in target_addr;
+    int tx_fd = setup_udp_sender(&target_addr, target_ip, target_port);
     if (tx_fd < 0) {
-        fprintf(stderr, "Failed to setup MAVLink sender %s:%d\n", mav_ip, mav_port);
+        fprintf(stderr, "failed to setup sender to %s:%d: %s\n", target_ip, target_port, strerror(errno));
         close(rx_fd);
         return 1;
     }
 
-    printf("stream_commander: in=%s:%d out=%s:%d idle=%.2fHz active<=%.2fHz keepalive=%.2fHz hold=%.2fs timeout=%.2fs rx_burst=%d rx_parse=%.2fHz tsys=%d tcomp=%d\n",
-           listen_ip, listen_port, mav_ip, mav_port,
-           idle_rate_hz, active_rate_hz, manual_keepalive_hz, active_hold_sec, DEFAULT_INPUT_TIMEOUT_SEC,
-           rx_burst_max, rx_parse_hz, target_sys, target_comp);
+    printf("stream_commander: listen=%s:%d -> target=%s:%d sys=%d comp=%d tsys=%d tcomp=%d manual_keepalive=%.2fHz\n",
+           listen_ip, listen_port, target_ip, target_port, sysid, compid, target_sys, target_comp, manual_keepalive_hz);
 
-    double next_tx = monotonic_seconds() + (1.0 / idle_rate_hz);
-    double next_manual_keepalive = monotonic_seconds() + (1.0 / manual_keepalive_hz);
-    double next_rx = monotonic_seconds() + (1.0 / rx_parse_hz);
-    double active_until = 0.0;
-    double adaptive_rate_hz = idle_rate_hz;
-    double last_cmd_rx_time = -1.0;
-    int have_rx_period = 0;
-
-    command_state_t state;
-    memset(&state, 0, sizeof(state));
-    flight_mode_snapshot_t original_mode;
-    memset(&original_mode, 0, sizeof(original_mode));
-    int mode_switch_attempted = 0;
-    int mode_switched_to_manual = 0;
-
-    int have_arm_state = 0;
-    uint8_t armed = 0;
-
-    request_message(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp, MAVLINK_MSG_ID_HEARTBEAT);
-    (void)wait_for_target_heartbeat(tx_fd, target_sys, target_comp, 1.5, &original_mode);
+    int last_arm = -1;
+    unsigned long invalid_count = 0;
+    manual_state_t manual_state;
+    memset(&manual_state, 0, sizeof(manual_state));
+    double next_manual_tx = mono_now_sec() + manual_period;
 
     while (g_running) {
-        double now = monotonic_seconds();
-        double next_event = next_manual_keepalive;
-        if (next_tx < next_event) next_event = next_tx;
-        if (next_rx < next_event) next_event = next_rx;
-        double timeout = next_event - now;
-        if (timeout < 0.0) timeout = 0.0;
+        double now = mono_now_sec();
+        double wait_sec = next_manual_tx - now;
+        if (wait_sec < 0.0) wait_sec = 0.0;
+        if (wait_sec > 1.0) wait_sec = 1.0;
 
         fd_set rfds;
         FD_ZERO(&rfds);
-        int poll_rx = (now >= next_rx);
-        if (poll_rx) {
-            FD_SET(rx_fd, &rfds);
-        }
+        FD_SET(rx_fd, &rfds);
 
         struct timeval tv;
-        tv.tv_sec = (time_t)timeout;
-        tv.tv_usec = (suseconds_t)((timeout - (double)tv.tv_sec) * 1e6);
+        tv.tv_sec = (int)wait_sec;
+        tv.tv_usec = (suseconds_t)((wait_sec - (double)tv.tv_sec) * 1e6);
 
-        int ready = select(poll_rx ? (rx_fd + 1) : 0, &rfds, NULL, NULL, &tv);
-        if (ready < 0) {
+        int r = select(rx_fd + 1, &rfds, NULL, NULL, &tv);
+        if (r < 0) {
             if (errno == EINTR) continue;
             perror("select");
             break;
         }
 
-        if (poll_rx && ready > 0 && FD_ISSET(rx_fd, &rfds)) {
-            int rx_processed = 0;
-            for (;;) {
-                uint8_t buf[512];
-                ssize_t n = recvfrom(rx_fd, buf, sizeof(buf), MSG_DONTWAIT, NULL, NULL);
-                if (n < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-                    if (errno == EINTR) continue;
-                    break;
-                }
-
-                command_state_t incoming;
-                memset(&incoming, 0, sizeof(incoming));
-                if (!parse_command_packet(buf, (size_t)n, &incoming)) {
-                    continue;
-                }
-
-                state = incoming;
-                save_state_file(state_path, &state);
-                double rx_now = monotonic_seconds();
-                active_until = rx_now + active_hold_sec;
-                if (last_cmd_rx_time > 0.0) {
-                    const double dt = rx_now - last_cmd_rx_time;
-                    if (dt > 1e-6) {
-                        double candidate_rate_hz = 1.0 / dt;
-                        if (candidate_rate_hz < idle_rate_hz) candidate_rate_hz = idle_rate_hz;
-                        if (candidate_rate_hz > active_rate_hz) candidate_rate_hz = active_rate_hz;
-                        if (!have_rx_period) {
-                            adaptive_rate_hz = candidate_rate_hz;
-                            have_rx_period = 1;
-                        } else {
-                            // Smooth jitter while still following source cadence quickly.
-                            adaptive_rate_hz = adaptive_rate_hz * 0.70 + candidate_rate_hz * 0.30;
-                        }
+        if (r > 0 && FD_ISSET(rx_fd, &rfds)) {
+            uint8_t buf[1024];
+            ssize_t n = recvfrom(rx_fd, buf, sizeof(buf), 0, NULL, NULL);
+            if (n >= 0) {
+                command_packet_t pkt;
+                if (!parse_command_packet(buf, (size_t)n, &pkt)) {
+                    invalid_count++;
+                    if ((invalid_count % 50UL) == 1UL) {
+                        fprintf(stderr, "stream_commander: ignored invalid packet len=%zd (count=%lu)\n", n, invalid_count);
                     }
                 } else {
-                    adaptive_rate_hz = idle_rate_hz;
-                }
-                last_cmd_rx_time = rx_now;
-                if (next_tx > rx_now) next_tx = rx_now;
+                    if (last_arm < 0 || pkt.arm != (uint8_t)last_arm) {
+                        send_arm_command(tx_fd, &target_addr, sysid, compid, target_sys, target_comp, pkt.arm);
+                        last_arm = pkt.arm;
+                    }
 
-                if (!mode_switch_attempted && state.valid) {
-                    mode_switch_attempted = 1;
-                    if (!original_mode.valid) {
-                        request_message(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp, MAVLINK_MSG_ID_HEARTBEAT);
-                        (void)wait_for_target_heartbeat(tx_fd, target_sys, target_comp, 1.0, &original_mode);
+                    if (pkt.rc_count > 0) {
+                        send_rc_channels_override(tx_fd, &target_addr, sysid, compid, target_sys, target_comp, &pkt);
                     }
-                    if (original_mode.valid && original_mode.main_mode != PX4_CUSTOM_MAIN_MODE_MANUAL) {
-                        send_set_mode(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp,
-                                      original_mode.base_mode, PX4_CUSTOM_MAIN_MODE_MANUAL, 0);
-                        uint8_t ack_result = MAV_RESULT_FAILED;
-                        if (wait_for_command_ack(tx_fd, MAV_CMD_DO_SET_MODE, 1.5, &ack_result)
-                            && ack_result == MAV_RESULT_ACCEPTED) {
-                            mode_switched_to_manual = 1;
-                            printf("mode switched -> MANUAL\n");
-                        } else {
-                            printf("mode switch -> MANUAL failed/timeout\n");
-                        }
+                    if (pkt.act_count > 0) {
+                        send_do_set_actuator(tx_fd, &target_addr, sysid, compid, target_sys, target_comp, &pkt);
                     }
-                }
 
-                if (!have_arm_state || state.arm != armed) {
-                    int force_arm = (mav_read_mode_state() == MAV_MODE_STATE_TEST);
-                    if (state.arm && !force_arm) {
-                        printf("safe mode: mode!=TEST, force-arm disabled (normal arm only)\n");
-                    }
-                    if (state.arm) {
-                        send_prearm_low_throttle(tx_fd, &mav_addr, sysid, compid, target_sys);
-                    }
-                    send_arm_disarm(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp,
-                                    state.arm != 0, force_arm);
-                    armed = state.arm;
-                    have_arm_state = 1;
-                    printf("arm state changed -> %s (%s)\n",
-                           armed ? "ARM" : "DISARM",
-                           force_arm ? "force" : "normal");
-                }
+                    if (pkt.manual_level >= 1) manual_state.x = pkt.manual.x;
+                    if (pkt.manual_level >= 2) manual_state.y = pkt.manual.y;
+                    if (pkt.manual_level >= 3) manual_state.z = pkt.manual.z;
+                    if (pkt.manual_level >= 4) manual_state.r = pkt.manual.r;
+                    if (pkt.manual_level >= 5) manual_state.buttons = pkt.manual.buttons;
+                    if (pkt.manual_level >= 6) manual_state.buttons2 = pkt.manual.buttons2;
+                    if (pkt.manual_level >= 7) manual_state.enabled_extensions = pkt.manual.enabled_extensions;
+                    if (pkt.manual_level >= 8) manual_state.s = pkt.manual.s;
+                    if (pkt.manual_level >= 9) manual_state.t = pkt.manual.t;
+                    if (pkt.manual_level >= 10) manual_state.aux1 = pkt.manual.aux1;
+                    if (pkt.manual_level >= 11) manual_state.aux2 = pkt.manual.aux2;
+                    if (pkt.manual_level >= 12) manual_state.aux3 = pkt.manual.aux3;
+                    if (pkt.manual_level >= 13) manual_state.aux4 = pkt.manual.aux4;
+                    if (pkt.manual_level >= 14) manual_state.aux5 = pkt.manual.aux5;
+                    if (pkt.manual_level >= 15) manual_state.aux6 = pkt.manual.aux6;
 
-                rx_processed++;
-                if (rx_processed >= rx_burst_max) {
-                    break;
+                    save_state_file(state_path, &pkt);
                 }
             }
         }
 
-        now = monotonic_seconds();
-        if (now >= next_rx) {
-            const double rx_period = 1.0 / rx_parse_hz;
-            double periods = floor((now - next_rx) / rx_period) + 1.0;
-            if (periods < 1.0) periods = 1.0;
-            next_rx += periods * rx_period;
-        }
-
-        now = monotonic_seconds();
-        if (now >= next_manual_keepalive) {
-            send_manual_control_keepalive(tx_fd, &mav_addr, sysid, compid, target_sys);
-            double keepalive_period = 1.0 / manual_keepalive_hz;
-            double periods = floor((now - next_manual_keepalive) / keepalive_period) + 1.0;
-            if (periods < 1.0) periods = 1.0;
-            next_manual_keepalive += periods * keepalive_period;
-        }
-
-        if (now >= next_tx) {
-            int stream_active =
-                (state.valid &&
-                 last_cmd_rx_time > 0.0 &&
-                 (now - last_cmd_rx_time) <= DEFAULT_INPUT_TIMEOUT_SEC);
-
-            if (stream_active) {
-                send_actuators(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp, &state);
-            } else {
-                // Input timeout fallback: keep FC in neutral manual-stick state.
-                send_manual_control_keepalive(tx_fd, &mav_addr, sysid, compid, target_sys);
+        now = mono_now_sec();
+        if (now >= next_manual_tx) {
+            send_manual_control(tx_fd, &target_addr, sysid, compid, target_sys, &manual_state);
+            next_manual_tx += manual_period;
+            if (now - next_manual_tx > 1.0) {
+                next_manual_tx = now + manual_period;
             }
-            double current_rate_hz = idle_rate_hz;
-            if (stream_active && now < active_until) {
-                current_rate_hz = adaptive_rate_hz;
-                if (current_rate_hz < idle_rate_hz) current_rate_hz = idle_rate_hz;
-                if (current_rate_hz > active_rate_hz) current_rate_hz = active_rate_hz;
-            }
-            const double current_period = 1.0 / current_rate_hz;
-            double periods = floor((now - next_tx) / current_period) + 1.0;
-            if (periods < 1.0) periods = 1.0;
-            next_tx += periods * current_period;
         }
-    }
-
-    if (have_arm_state && armed) {
-        int force_arm = (mav_read_mode_state() == MAV_MODE_STATE_TEST);
-        send_arm_disarm(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp, 0, force_arm);
-    }
-    if (mode_switched_to_manual && original_mode.valid) {
-        send_set_mode(tx_fd, &mav_addr, sysid, compid, target_sys, target_comp,
-                      original_mode.base_mode, original_mode.main_mode, original_mode.sub_mode);
-        printf("mode restored -> main=%u sub=%u\n",
-               (unsigned)original_mode.main_mode, (unsigned)original_mode.sub_mode);
     }
 
     close(tx_fd);
     close(rx_fd);
+    rocket_single_instance_release(lock_fd);
     return 0;
 }

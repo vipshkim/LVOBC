@@ -22,10 +22,11 @@
 #include <unistd.h>
 
 #include <mavlink.h>
+#include "rocket_common.h"
 #include "rocket_mav_common.h"
 
 #define DEFAULT_LISTEN_IP   "127.0.0.1"
-#define DEFAULT_LISTEN_PORT 14550
+#define DEFAULT_LISTEN_PORT 14511
 #define DEFAULT_SELECT_TIMEOUT 0.2
 #define DEFAULT_OUTPUT_FILE "/tmp/monitoring_last"
 #define DEFAULT_MODE_STATE_PATH "/tmp/rocket-mav-mode.env"
@@ -256,6 +257,13 @@ static void format_monitoring(int mode_state, int have_arm, int armed, int ready
 }
 
 int main(void) {
+    char lock_err[160];
+    int lock_fd = rocket_single_instance_acquire("monitoringd", lock_err, sizeof(lock_err));
+    if (lock_fd < 0) {
+        fprintf(stderr, "monitoringd: %s\n", lock_err[0] ? lock_err : "single-instance lock failed");
+        return 1;
+    }
+
     const char *listen_ip = mav_cfg_get_str(MAV_CFG_KEY_MONITORING_LISTEN_IP, DEFAULT_LISTEN_IP);
     int listen_port = mav_cfg_get_int(MAV_CFG_KEY_MONITORING_LISTEN_PORT, DEFAULT_LISTEN_PORT);
     int target_sys = mav_cfg_get_int(MAV_CFG_KEY_SCAN_TARGET_SYS, MAV_DEFAULT_TARGET_SYS);
@@ -263,7 +271,7 @@ int main(void) {
     int local_sysid = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_SYSID, MAV_DEFAULT_SYSID);
     int local_compid = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_COMPID, MAV_DEFAULT_COMPID);
     const char *tx_ip = mav_cfg_get_str(MAV_CFG_KEY_TOOLS_TARGET_IP, "127.0.0.1");
-    int tx_port = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_PORT, 14652);
+    int tx_port = mav_cfg_get_int(MAV_CFG_KEY_TOOLS_TARGET_PORT, 15651);
     double select_timeout = mav_cfg_get_double(MAV_CFG_KEY_MONITORINGD_SELECT_TIMEOUT_SEC, DEFAULT_SELECT_TIMEOUT);
     double time_sync_retry_interval = mav_cfg_get_double(
         MAV_CFG_KEY_MONITORINGD_TIME_SYNC_RETRY_INTERVAL_SEC, TIME_SYNC_RETRY_INTERVAL_SEC);
@@ -278,6 +286,7 @@ int main(void) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         write_value("#[fg=white,bg=colour240,bold] ⏸ #[default] #[fg=white,bg=red,bold] RDY #[default] 🔋NA 📡NA");
+        rocket_single_instance_release(lock_fd);
         return 1;
     }
 
@@ -291,12 +300,14 @@ int main(void) {
     if (inet_pton(AF_INET, listen_ip, &addr.sin_addr) != 1) {
         close(sock);
         write_value("#[fg=white,bg=colour240,bold] ⏸ #[default] #[fg=white,bg=red,bold] RDY #[default] 🔋NA 📡NA");
+        rocket_single_instance_release(lock_fd);
         return 1;
     }
 
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(sock);
         write_value("#[fg=white,bg=colour240,bold] ⏸ #[default] #[fg=white,bg=red,bold] RDY #[default] 🔋NA 📡NA");
+        rocket_single_instance_release(lock_fd);
         return 1;
     }
 
@@ -306,7 +317,7 @@ int main(void) {
     tx_addr.sin_port = htons((uint16_t)tx_port);
     if (inet_pton(AF_INET, tx_ip, &tx_addr.sin_addr) != 1) {
         tx_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        tx_addr.sin_port = htons(14652);
+        tx_addr.sin_port = htons((uint16_t)tx_port);
     }
 
     int have_percent = 0;
@@ -472,5 +483,6 @@ int main(void) {
     }
 
     close(sock);
+    rocket_single_instance_release(lock_fd);
     return 0;
 }
